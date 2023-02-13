@@ -2,6 +2,7 @@ use std::{
     fs::File,
     io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
+    thread::sleep,
     time::Duration,
 };
 
@@ -137,19 +138,45 @@ fn parse_boot(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn upload_entry(
-    entry: RkBootHeaderEntry,
+fn download_entry(
+    header: RkBootHeaderEntry,
     code: u16,
     file: &mut File,
     handle: &DeviceHandle<rusb::GlobalContext>,
 ) -> Result<()> {
-    for i in 0..entry.count {
+    for i in 0..header.count {
         let mut entry: RkBootEntryBytes = [0; 57];
+        file.seek(SeekFrom::Start(
+            header.offset as u64 + (header.size * i) as u64,
+        ))?;
         file.read_exact(&mut entry)?;
         let entry = RkBootEntry::from_bytes(&mut entry);
-        println!("== {} Entry  {} ==", code, i);
-        println!("{:?}", entry);
-        println!("Name: {}", String::from_utf16(entry.name.as_slice())?);
+        println!("{} Name: {}", i, String::from_utf16(entry.name.as_slice())?);
+
+        let mut data = Vec::new();
+        data.resize(entry.data_size as usize, 0);
+        file.seek(SeekFrom::Start(entry.data_offset as u64))?;
+        file.read_exact(&mut data)?;
+
+        if data.len() % 4096 == 4095 {
+            data.push(0);
+        }
+
+        let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740).checksum(&data);
+        data.push((crc >> 8) as u8);
+        data.push((crc & 0xff) as u8);
+        println!("CRC: {:x}", crc);
+        for chunk in data.chunks(4096) {
+            handle.write_control(0x40, 0xc, 0, code, chunk, Duration::from_secs(5))?;
+        }
+
+        if data.len() % 4096 == 0 {
+            handle.write_control(0x40, 0xc, 0, code, &[0u8], Duration::from_secs(5))?;
+        }
+        if entry.data_delay > 0 {
+            sleep(Duration::from_millis(entry.data_delay as u64));
+        }
+        println!("Done!");
     }
 
     Ok(())
@@ -166,8 +193,8 @@ fn download_boot(path: &Path) -> Result<()> {
     let (mut handle, interface, input, output) = find_device()?;
     handle.claim_interface(interface)?;
 
-    upload_entry(header.entry_471, 0x471, &mut file, &mut handle)?;
-    upload_entry(header.entry_472, 0x472, &mut file, &mut handle)?;
+    download_entry(header.entry_471, 0x471, &mut file, &mut handle)?;
+    download_entry(header.entry_472, 0x472, &mut file, &mut handle)?;
 
     Ok(())
 }
