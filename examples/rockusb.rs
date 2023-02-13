@@ -146,18 +146,22 @@ fn download_entry(
 ) -> Result<()> {
     for i in 0..header.count {
         let mut entry: RkBootEntryBytes = [0; 57];
+
         file.seek(SeekFrom::Start(
             header.offset as u64 + (header.size * i) as u64,
         ))?;
         file.read_exact(&mut entry)?;
+
         let entry = RkBootEntry::from_bytes(&mut entry);
         println!("{} Name: {}", i, String::from_utf16(entry.name.as_slice())?);
 
         let mut data = Vec::new();
         data.resize(entry.data_size as usize, 0);
+
         file.seek(SeekFrom::Start(entry.data_offset as u64))?;
         file.read_exact(&mut data)?;
 
+        // Avoid splitting the 2 byte crc in two 4096 byte chunks
         if data.len() % 4096 == 4095 {
             data.push(0);
         }
@@ -170,13 +174,14 @@ fn download_entry(
             handle.write_control(0x40, 0xc, 0, code, chunk, Duration::from_secs(5))?;
         }
 
+        // Send a single 0 byte to signal eof if every chunk was exactly 4096 bytes
         if data.len() % 4096 == 0 {
             handle.write_control(0x40, 0xc, 0, code, &[0u8], Duration::from_secs(5))?;
         }
+        println!("Done!... waiting {}ms", entry.data_delay);
         if entry.data_delay > 0 {
             sleep(Duration::from_millis(entry.data_delay as u64));
         }
-        println!("Done!");
     }
 
     Ok(())
