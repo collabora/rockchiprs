@@ -12,8 +12,8 @@ impl CommandStatus {
     pub fn to_bytes(&self, bytes: &mut CommandStatusBytes) {
         let mut bytes = &mut bytes[..];
         bytes.put_slice(b"USBS");
-        bytes.put_u32_le(self.tag);
-        bytes.put_u32_le(self.residue);
+        bytes.put_u32(self.tag);
+        bytes.put_u32(self.residue);
         bytes.put_u8(self.status);
     }
 
@@ -24,7 +24,7 @@ impl CommandStatus {
         if &magic != b"USBS" {
             return None;
         }
-        let tag = bytes.get_u32_le();
+        let tag = bytes.get_u32();
         let residue = bytes.get_u32_le();
         let status = bytes.get_u8();
         Some(CommandStatus {
@@ -52,16 +52,16 @@ impl CommandBlock {
     pub fn to_bytes(&self, bytes: &mut CommandBlockBytes) {
         let mut bytes = &mut bytes[..];
         bytes.put_slice(b"USBC");
-        bytes.put_u32_le(self.tag);
-        bytes.put_u32_le(self.transfer_length);
+        bytes.put_u32(self.tag);
+        bytes.put_u32(self.transfer_length);
         bytes.put_u8(self.flags);
         bytes.put_u8(self.lun);
         bytes.put_u8(self.cb_length);
         bytes.put_u8(self.code);
         bytes.put_u8(0);
-        bytes.put_u32_le(self.address);
+        bytes.put_u32(self.address);
         bytes.put_u8(0);
-        bytes.put_u16_le(self.length);
+        bytes.put_u16(self.length);
     }
 
     pub fn from_bytes(bytes: &CommandBlockBytes) -> Option<CommandBlock> {
@@ -71,16 +71,16 @@ impl CommandBlock {
         if &magic != b"USBC" {
             return None;
         }
-        let tag = bytes.get_u32_le();
-        let transfer_length = bytes.get_u32_le();
+        let tag = bytes.get_u32();
+        let transfer_length = bytes.get_u32();
         let flags = bytes.get_u8();
         let lun = bytes.get_u8();
         let cb_length = bytes.get_u8();
         let code = bytes.get_u8();
         bytes.advance(1);
-        let address = bytes.get_u32_le();
+        let address = bytes.get_u32();
         bytes.advance(1);
-        let length = bytes.get_u16_le();
+        let length = bytes.get_u16();
         Some(CommandBlock {
             tag,
             transfer_length,

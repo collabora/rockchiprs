@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{Read, Seek, SeekFrom},
+    io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     thread::sleep,
     time::Duration,
@@ -65,6 +65,134 @@ fn find_device() -> Result<(DeviceHandle<rusb::GlobalContext>, u8, u8, u8)> {
     Err(anyhow!("No device found"))
 }
 
+fn read_flash_info() -> Result<()> {
+    let (mut handle, interface, input, output) = find_device()?;
+    handle.claim_interface(interface)?;
+
+    let cb = rockusb::CommandBlock {
+        tag: 12,
+        transfer_length: 16,
+        flags: 0x80,    // Direction in
+        cb_length: 0x6, // Eh?
+        code: 0x1A,     // Read Chip Info
+        ..Default::default()
+    };
+    let mut cb_bytes = Default::default();
+    cb.to_bytes(&mut cb_bytes);
+
+    println!("=> {:x?}", cb_bytes);
+    handle
+        .write_bulk(output, &cb_bytes, Duration::from_secs(5))
+        .context("Failed to write")?;
+
+    let mut info = [0u8; 512];
+    let r = handle
+        .read_bulk(input, &mut info, Duration::from_secs(5))
+        .context("Failed to read info")?;
+    println!("info => {:0x?}", info);
+
+    let mut cs_bytes: CommandStatusBytes = Default::default();
+    let r = handle
+        .read_bulk(input, &mut cs_bytes, Duration::from_secs(5))
+        .context("Failed to read csw")?;
+    let cs = rockusb::CommandStatus::from_bytes(&cs_bytes);
+    println!("=> {} - {:?} {:0x?}", r, cs, cs_bytes);
+    Ok(())
+}
+
+fn read_lba(offset: u32, length: u16, path: &Path) -> Result<()> {
+    let (mut handle, interface, input, output) = find_device()?;
+    handle.claim_interface(interface)?;
+
+    let cb = rockusb::CommandBlock {
+        tag: 0xdead,
+
+        transfer_length: length as u32 * 512, // dwCount * wSectorSize;
+        flags: 0x80,                          // Direction in
+        //
+        cb_length: 0xa,  // command block ?
+        code: 0x14,      // Read LBA
+        address: offset, // EndianU32_LtoB(dwPos);
+        length: length,  //  EndianU16_LtoB(usSectorLen); usSectorLen=dwCount
+        ..Default::default()
+    };
+    let mut cb_bytes = Default::default();
+    cb.to_bytes(&mut cb_bytes);
+
+    println!("=> {:x?}", cb_bytes);
+    handle
+        .write_bulk(output, &cb_bytes, Duration::from_secs(5))
+        .context("Failed to write")?;
+
+    let mut data = Vec::new();
+    data.resize(length as usize * 512, 0);
+    let read = handle
+        .read_bulk(input, &mut data, Duration::from_secs(5))
+        .context("Failed to read")?;
+    println!("read {} bytes", read);
+
+    let mut cs_bytes: CommandStatusBytes = Default::default();
+    let r = handle
+        .read_bulk(input, &mut cs_bytes, Duration::from_secs(5))
+        .context("Failed to read csw")?;
+    let cs = rockusb::CommandStatus::from_bytes(&cs_bytes);
+    println!("=> {} - {:?} {:0x?}", r, cs, cs_bytes);
+
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(path)?;
+    file.write_all(&data)?;
+
+    Ok(())
+}
+
+fn write_lba(offset: u32, length: u16, path: &Path) -> Result<()> {
+    let (mut handle, interface, input, output) = find_device()?;
+    handle.claim_interface(interface)?;
+
+    let cb = rockusb::CommandBlock {
+        tag: 0xdead,
+
+        transfer_length: length as u32 * 512, // dwCount * wSectorSize;
+        flags: 0x00,                          // Direction out
+        //
+        cb_length: 0xa,  // command block ?
+        code: 0x15,      // Read LBA
+        address: offset, // EndianU32_LtoB(dwPos);
+        length: length,  //  EndianU16_LtoB(usSectorLen); usSectorLen=dwCount
+        ..Default::default()
+    };
+    let mut cb_bytes = Default::default();
+    cb.to_bytes(&mut cb_bytes);
+
+    println!("=> {:x?}", cb_bytes);
+    handle
+        .write_bulk(output, &cb_bytes, Duration::from_secs(5))
+        .context("Failed to write")?;
+
+    let mut data = Vec::new();
+    data.resize(length as usize * 512, 0);
+
+    let mut file = File::open(path)?;
+    file.read_exact(&mut data)?;
+
+    let read = handle
+        .write_bulk(output, &mut data, Duration::from_secs(5))
+        .context("Failed to write")?;
+    println!("write {} bytes", read);
+
+    let mut cs_bytes: CommandStatusBytes = Default::default();
+    let r = handle
+        .read_bulk(input, &mut cs_bytes, Duration::from_secs(5))
+        .context("Failed to read csw")?;
+    let cs = rockusb::CommandStatus::from_bytes(&cs_bytes);
+    println!("=> {} - {:?} {:0x?}", r, cs, cs_bytes);
+
+    Ok(())
+}
+
 fn read_chip_info() -> Result<()> {
     let (mut handle, interface, input, output) = find_device()?;
     handle.claim_interface(interface)?;
@@ -72,7 +200,7 @@ fn read_chip_info() -> Result<()> {
     let cb = rockusb::CommandBlock {
         tag: 12,
         transfer_length: 16,
-        flags: 0x80,    // Direction out
+        flags: 0x80,    // Direction in
         cb_length: 0x6, // Eh?
         code: 0x1B,     // Read Chip Info
         ..Default::default()
@@ -211,9 +339,24 @@ fn download_boot(path: &Path) -> Result<()> {
 
 #[derive(Debug, clap::Subcommand)]
 enum Command {
-    ParseBoot { path: PathBuf },
-    DownloadBoot { path: PathBuf },
+    ParseBoot {
+        path: PathBuf,
+    },
+    DownloadBoot {
+        path: PathBuf,
+    },
+    Read {
+        offset: u32,
+        length: u16,
+        path: PathBuf,
+    },
+    Write {
+        offset: u32,
+        length: u16,
+        path: PathBuf,
+    },
     ChipInfo,
+    FlashInfo,
 }
 
 #[derive(clap::Parser)]
@@ -227,6 +370,17 @@ fn main() -> Result<()> {
     match opt.command {
         Command::ParseBoot { path } => parse_boot(&path),
         Command::DownloadBoot { path } => download_boot(&path),
+        Command::Read {
+            offset,
+            length,
+            path,
+        } => read_lba(offset, length, &path),
+        Command::Write {
+            offset,
+            length,
+            path,
+        } => write_lba(offset, length, &path),
         Command::ChipInfo => read_chip_info(),
+        Command::FlashInfo => read_flash_info(),
     }
 }
