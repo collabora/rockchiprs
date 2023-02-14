@@ -17,10 +17,6 @@ use rusb::DeviceHandle;
 fn find_device() -> Result<(DeviceHandle<rusb::GlobalContext>, u8, u8, u8)> {
     let devices = rusb::DeviceList::new()?;
     for d in devices.iter() {
-        let handle = match d.open() {
-            Ok(h) => h,
-            _ => continue,
-        };
         let desc = d.device_descriptor()?;
         if desc.vendor_id() != 0x2207 {
             continue;
@@ -38,11 +34,15 @@ fn find_device() -> Result<(DeviceHandle<rusb::GlobalContext>, u8, u8, u8)> {
                         e.direction() == rusb::Direction::In
                             && e.transfer_type() == rusb::TransferType::Bulk
                     });
-                    println!(" {:?} {:?}", input, output);
 
                     match (input, output) {
                         (Some(input), Some(output)) => {
                             println!("Found {:?} interface: {}", d, i_desc.setting_number());
+                            let handle = match d.open() {
+                                Ok(h) => h,
+                                _ => continue,
+                            };
+
                             return Ok((
                                 handle,
                                 i_desc.setting_number(),
@@ -50,7 +50,12 @@ fn find_device() -> Result<(DeviceHandle<rusb::GlobalContext>, u8, u8, u8)> {
                                 output.address(),
                             ));
                         }
-                        _ => (),
+                        (input, output) => {
+                            println!(
+                                "Device {:?} missing endpoints - {:?} {:?}",
+                                d, input, output
+                            );
+                        }
                     }
                 }
             }
