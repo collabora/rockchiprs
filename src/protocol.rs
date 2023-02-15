@@ -141,8 +141,21 @@ impl CommandBlock {
             transfer_length: u32::from(sectors) * SECTOR_SIZE,
             flags: Direction::In,
             lun: 0,
-            cdb_length: 0x6,
+            cdb_length: 0xa,
             cd_code: CommandCode::ReadLBA,
+            cd_address: start_sector,
+            cd_length: sectors,
+        }
+    }
+
+    pub fn write_lba(start_sector: u32, sectors: u16) -> CommandBlock {
+        CommandBlock {
+            tag: fastrand::u32(..),
+            transfer_length: u32::from(sectors) * SECTOR_SIZE,
+            flags: Direction::Out,
+            lun: 0,
+            cdb_length: 0xa,
+            cd_code: CommandCode::WriteLBA,
             cd_address: start_sector,
             cd_length: sectors,
         }
