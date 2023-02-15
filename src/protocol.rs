@@ -5,7 +5,7 @@ const SECTOR_SIZE: u32 = 512;
 
 #[repr(u8)]
 #[derive(Debug, Eq, PartialEq, Clone, Copy, IntoPrimitive, TryFromPrimitive)]
-enum Direction {
+pub enum Direction {
     In = 0x80,
     Out = 0x0,
 }
@@ -43,11 +43,13 @@ enum CommandCode {
 
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum CommandStatusParseError {
-    #[error("Invalid Command Status signature: {0:x?}")]
+    #[error("Invalid command status signature: {0:x?}")]
     InvalidSignature([u8; 4]),
+    #[error("Invalid command status length: {0}")]
+    InvalidLength(usize),
 }
 
-pub type CommandStatusBytes = [u8; 13];
+pub const COMMAND_STATUS_BYTES: usize = 13;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandStatus {
     pub tag: u32,
@@ -56,18 +58,19 @@ pub struct CommandStatus {
 }
 
 impl CommandStatus {
-    pub fn to_bytes(&self, bytes: &mut CommandStatusBytes) {
+    pub fn to_bytes(&self, bytes: &mut [u8]) -> usize {
         let mut bytes = &mut bytes[..];
         bytes.put_slice(b"USBS");
         bytes.put_u32(self.tag);
         bytes.put_u32_le(self.residue);
         bytes.put_u8(self.status);
+        COMMAND_STATUS_BYTES
     }
 
-    pub fn from_bytes(
-        bytes: &CommandStatusBytes,
-    ) -> Result<CommandStatus, CommandStatusParseError> {
-        let mut bytes = &bytes[..];
+    pub fn from_bytes(mut bytes: &[u8]) -> Result<CommandStatus, CommandStatusParseError> {
+        if bytes.len() < COMMAND_STATUS_BYTES {
+            return Err(CommandStatusParseError::InvalidLength(bytes.len()));
+        }
         let mut magic = [0u8; 4];
         bytes.copy_to_slice(&mut magic);
         if &magic != b"USBS" {
@@ -92,8 +95,11 @@ pub enum CommandBlockParseError {
     UnknownCommandCode(u8),
     #[error("Unknown flags: {0:x}")]
     UnknownFlags(u8),
+    #[error("Invalid command block length: {0}")]
+    InvalidLength(usize),
 }
-pub type CommandBlockBytes = [u8; 31];
+
+pub const COMMAND_BLOCK_BYTES: usize = 31;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandBlock {
     tag: u32,
@@ -161,8 +167,19 @@ impl CommandBlock {
         }
     }
 
-    pub fn to_bytes(&self, bytes: &mut CommandBlockBytes) {
-        let mut bytes = &mut bytes[..];
+    pub fn tag(&self) -> u32 {
+        self.tag
+    }
+
+    pub fn direction(&self) -> Direction {
+        self.flags
+    }
+
+    pub fn transfer_length(&self) -> u32 {
+        self.transfer_length
+    }
+
+    pub fn to_bytes<'a>(&self, mut bytes: &'a mut [u8]) -> usize {
         bytes.put_slice(b"USBC");
         bytes.put_u32(self.tag);
         bytes.put_u32(self.transfer_length);
@@ -174,10 +191,13 @@ impl CommandBlock {
         bytes.put_u32(self.cd_address);
         bytes.put_u8(0);
         bytes.put_u16(self.cd_length);
+        COMMAND_BLOCK_BYTES
     }
 
-    pub fn from_bytes(bytes: &CommandBlockBytes) -> Result<CommandBlock, CommandBlockParseError> {
-        let mut bytes = &bytes[..];
+    pub fn from_bytes(mut bytes: &[u8]) -> Result<CommandBlock, CommandBlockParseError> {
+        if bytes.len() < COMMAND_BLOCK_BYTES {
+            return Err(CommandBlockParseError::InvalidLength(bytes.len()));
+        }
         let mut magic = [0u8; 4];
         bytes.copy_to_slice(&mut magic);
         if &magic != b"USBC" {
