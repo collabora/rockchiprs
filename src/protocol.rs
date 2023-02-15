@@ -179,7 +179,7 @@ impl CommandBlock {
         self.transfer_length
     }
 
-    pub fn to_bytes<'a>(&self, mut bytes: &'a mut [u8]) -> usize {
+    pub fn to_bytes(&self, mut bytes: &mut [u8]) -> usize {
         bytes.put_slice(b"USBC");
         bytes.put_u32(self.tag);
         bytes.put_u32(self.transfer_length);

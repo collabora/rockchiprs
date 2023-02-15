@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use protocol::{CommandBlock, Direction};
 use thiserror::Error;
 
