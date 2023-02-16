@@ -75,6 +75,8 @@ struct LibUsbTransport {
     ep_out: u8,
     offset: u32,
     written: usize,
+    outstanding_write: usize,
+    write_buffer: [u8; 512],
 }
 
 impl LibUsbTransport {
@@ -91,6 +93,8 @@ impl LibUsbTransport {
             ep_out,
             offset: 0,
             written: 0,
+            outstanding_write: 0,
+            write_buffer: [0u8; 512],
         }
     }
 
@@ -143,25 +147,40 @@ impl LibUsbTransport {
 
 impl Write for LibUsbTransport {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.outstanding_write > 0 {
+            let left = 512 - self.outstanding_write;
+            let copy = left.min(buf.len());
+            let end = self.outstanding_write + copy;
+
+            self.write_buffer[self.outstanding_write..end].copy_from_slice(&buf[0..copy]);
+            self.outstanding_write += copy;
+            assert!(self.outstanding_write <= 512);
+
+            if self.outstanding_write == 512 {
+                let towrite = self.write_buffer;
+                self.write_lba(self.offset, &towrite).unwrap();
+                self.offset += 1;
+                self.outstanding_write = 0;
+            }
+            return Ok(copy);
+        }
+
         let old = self.offset;
         const CHUNK: usize = 128 * 512;
         let written = if buf.len() > CHUNK {
             self.write_lba(self.offset, &buf[0..CHUNK]).unwrap();
             self.offset += (CHUNK / 512) as u32;
             CHUNK
-        } else if buf.len() > 512 {
+        } else if buf.len() >= 512 {
             let towrite = buf.len() / 512;
             let towrite = towrite * 512;
             self.write_lba(self.offset, &buf[0..towrite]).unwrap();
             self.offset += (towrite / 512) as u32;
             towrite
         } else {
-            eprintln!("Write fallback for small write: {}", buf.len());
-            let mut read = [0u8; 512];
-            self.read_lba(self.offset, &mut read).unwrap();
-            read[0..buf.len()].copy_from_slice(buf);
-            self.write_lba(self.offset, &read).unwrap();
-            self.offset += 1;
+            self.write_buffer[0..buf.len()].copy_from_slice(&buf);
+            self.outstanding_write = buf.len();
+
             buf.len()
         };
 
@@ -181,22 +200,41 @@ impl Write for LibUsbTransport {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
+        if self.outstanding_write > 0 {
+            eprintln!(
+                "Write flush for small write flush : {}",
+                self.outstanding_write
+            );
+            let mut read = [0u8; 512];
+            self.read_lba(self.offset, &mut read).unwrap();
+            read[0..self.outstanding_write].copy_from_slice(&self.write_buffer);
+            self.write_lba(self.offset, &read).unwrap();
+
+            let mut check = [0u8; 512];
+            self.read_lba(self.offset, &mut check).unwrap();
+            assert_eq!(check, read);
+
+            self.outstanding_write = 0;
+            self.offset += 1;
+        }
+
         Ok(())
     }
 }
 
 impl Seek for LibUsbTransport {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        self.flush()?;
         match pos {
             SeekFrom::Start(offset) => {
                 assert!(offset % 512 == 0, "Not 512 multiple: {}", offset);
                 self.offset = (offset / 512) as u32;
             }
-            SeekFrom::End(_) => todo!(),
             SeekFrom::Current(offset) => {
                 assert!(offset % 512 == 0, "Not 512 multiple: {}", offset);
                 self.offset += (offset / 512) as u32;
             }
+            SeekFrom::End(_) => todo!(),
         }
         Ok(self.offset as u64 * 512)
     }
