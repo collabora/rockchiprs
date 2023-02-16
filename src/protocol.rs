@@ -135,7 +135,7 @@ impl CommandBlock {
             flags: Direction::In,
             lun: 0,
             cdb_length: 0x6,
-            cd_code: CommandCode::ReadFlashInfo,
+            cd_code: CommandCode::ReadChipInfo,
             cd_address: 0,
             cd_length: 0x0,
         }

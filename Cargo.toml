@@ -14,5 +14,7 @@ thiserror = "1.0.38"
 
 [dev-dependencies]
 anyhow = "1.0.69"
+bmap-parser = "0.1.0"
 clap = { version = "4.1.4", features = ["derive"] }
+flate2 = "1.0.25"
 rusb = "0.9.1"

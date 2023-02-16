@@ -1,3 +1,5 @@
+use std::convert::Infallible;
+
 use protocol::{CommandBlock, Direction};
 use thiserror::Error;
 
@@ -37,10 +39,16 @@ enum Operation<T> {
     Final(Result<T, RockUsbOperationError>),
 }
 
+enum IOBytes<'a> {
+    Inband,
+    Mutable(&'a mut [u8]),
+    Inmutable(&'a [u8]),
+}
+
 pub struct UsbOperation<'a, T, const N: usize> {
     command: CommandBlock,
     bytes: [u8; N],
-    data: Option<&'a mut [u8]>,
+    data: IOBytes<'a>,
     next: Operation<T>,
 }
 
@@ -53,16 +61,42 @@ where
         Self {
             command,
             bytes: [0u8; N],
-            data: None,
+            data: IOBytes::Inband,
             next: Operation::CommandBlock,
         }
     }
 
-    fn io_data(&mut self) -> &mut [u8] {
-        if let Some(data) = self.data.as_mut() {
-            data
-        } else {
-            &mut self.bytes
+    fn new_mut(command: CommandBlock, data: &'a mut [u8]) -> Self {
+        Self {
+            command,
+            bytes: [0u8; N],
+            data: IOBytes::Mutable(data),
+            next: Operation::CommandBlock,
+        }
+    }
+
+    fn new_data(command: CommandBlock, data: &'a [u8]) -> Self {
+        Self {
+            command,
+            bytes: [0u8; N],
+            data: IOBytes::Inmutable(data),
+            next: Operation::CommandBlock,
+        }
+    }
+
+    fn io_data_mut(&mut self) -> &mut [u8] {
+        match &mut self.data {
+            IOBytes::Inband => &mut self.bytes,
+            IOBytes::Mutable(ref mut data) => data,
+            IOBytes::Inmutable(_) => unreachable!(),
+        }
+    }
+
+    fn io_data(&mut self) -> &[u8] {
+        match self.data {
+            IOBytes::Inband => &self.bytes,
+            IOBytes::Mutable(ref data) => data,
+            IOBytes::Inmutable(ref data) => data,
         }
     }
 
@@ -85,14 +119,14 @@ where
                         data: &self.io_data()[..len],
                     },
                     Direction::In => UsbStep::ReadBulk {
-                        data: &mut self.io_data()[..len],
+                        data: &mut self.io_data_mut()[..len],
                     },
                 }
             }
             Operation::CommandStatus => {
                 let len = self.command.transfer_length() as usize;
                 self.next = Operation::Final(
-                    T::try_from(&self.bytes[..len]).map_err(|_e| RockUsbOperationError::TODO),
+                    T::try_from(&self.io_data()[..len]).map_err(|_e| RockUsbOperationError::TODO),
                 );
                 UsbStep::ReadBulk {
                     data: &mut self.bytes[..protocol::COMMAND_STATUS_BYTES],
@@ -105,6 +139,42 @@ where
 
 pub fn chip_info() -> UsbOperation<'static, [u8; 16], 31> {
     UsbOperation::new(CommandBlock::chip_info())
+}
+
+pub fn flash_info() -> UsbOperation<'static, [u8; 16], 31> {
+    UsbOperation::new(CommandBlock::flash_info())
+}
+
+#[derive(Debug)]
+pub struct Dummy {}
+
+impl TryFrom<&[u8]> for Dummy {
+    type Error = Infallible;
+
+    fn try_from(_value: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Dummy {})
+    }
+}
+
+pub fn read_lba(start_sector: u32, read: &mut [u8]) -> UsbOperation<'_, Dummy, 31> {
+    assert_eq!(read.len() % 512, 0, "Not a multiple of 512: {}", read.len());
+    UsbOperation::new_mut(
+        CommandBlock::read_lba(start_sector, (read.len() / 512) as u16),
+        read,
+    )
+}
+
+pub fn write_lba(start_sector: u32, write: &[u8]) -> UsbOperation<'_, Dummy, 31> {
+    assert_eq!(
+        write.len() % 512,
+        0,
+        "Not a multiple of 512: {}",
+        write.len()
+    );
+    UsbOperation::new_data(
+        CommandBlock::write_lba(start_sector, (write.len() / 512) as u16),
+        write,
+    )
 }
 
 #[cfg(test)]
