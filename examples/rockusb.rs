@@ -132,14 +132,16 @@ impl LibUsbTransport {
         Ok(self.handle_operation(rockusb::chip_info())?)
     }
 
-    pub fn read_lba(&mut self, start_sector: u32, read: &mut [u8]) -> Result<()> {
-        self.handle_operation(rockusb::read_lba(start_sector, read))?;
-        Ok(())
+    pub fn read_lba(&mut self, start_sector: u32, read: &mut [u8]) -> Result<u32> {
+        Ok(self
+            .handle_operation(rockusb::read_lba(start_sector, read))?
+            .into())
     }
 
-    pub fn write_lba(&mut self, start_sector: u32, write: &[u8]) -> Result<()> {
-        self.handle_operation(rockusb::write_lba(start_sector, write))?;
-        Ok(())
+    pub fn write_lba(&mut self, start_sector: u32, write: &[u8]) -> Result<u32> {
+        Ok(self
+            .handle_operation(rockusb::write_lba(start_sector, write))?
+            .into())
     }
 }
 

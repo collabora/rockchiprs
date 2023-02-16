@@ -181,7 +181,6 @@ pub fn flash_info() -> UsbOperation<'static, FlashInfo> {
 }
 
 #[derive(Debug, Clone, Copy)]
-#[repr(transparent)]
 pub struct Transferred(u32);
 impl FromOperation for Transferred {
     fn from_operation(io: &[u8], status: &CommandStatus) -> Result<Self, RockUsbOperationError>
@@ -194,6 +193,12 @@ impl FromOperation for Transferred {
         } else {
             Ok(Transferred(totransfer - status.residue))
         }
+    }
+}
+
+impl From<Transferred> for u32 {
+    fn from(t: Transferred) -> Self {
+        t.0
     }
 }
 
