@@ -8,12 +8,13 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
-use bmap_parser::{Bmap, SeekForward};
+use bmap_parser::Bmap;
 use clap::Parser;
 use flate2::read::GzDecoder;
 use rockusb::{
     bootfile::{RkBootEntry, RkBootEntryBytes, RkBootHeader, RkBootHeaderBytes, RkBootHeaderEntry},
-    UsbOperation,
+    protocol::{ChipInfo, FlashInfo},
+    FromOperation, UsbOperation,
 };
 use rusb::DeviceHandle;
 
@@ -98,12 +99,9 @@ impl LibUsbTransport {
         }
     }
 
-    fn handle_operation<T, const N: usize>(
-        &mut self,
-        mut operation: UsbOperation<T, N>,
-    ) -> Result<T>
+    fn handle_operation<T>(&mut self, mut operation: UsbOperation<T>) -> Result<T>
     where
-        T: for<'b> TryFrom<&'b [u8]> + 'static,
+        T: FromOperation,
         T: std::fmt::Debug,
     {
         loop {
@@ -126,11 +124,11 @@ impl LibUsbTransport {
         }
     }
 
-    fn flash_info(&mut self) -> Result<[u8; 16]> {
+    fn flash_info(&mut self) -> Result<FlashInfo> {
         Ok(self.handle_operation(rockusb::flash_info())?)
     }
 
-    fn chip_info(&mut self) -> Result<[u8; 16]> {
+    fn chip_info(&mut self) -> Result<ChipInfo> {
         Ok(self.handle_operation(rockusb::chip_info())?)
     }
 

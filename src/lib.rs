@@ -1,6 +1,6 @@
-use std::convert::Infallible;
+use std::marker::PhantomData;
 
-use protocol::{CommandBlock, Direction};
+use protocol::{ChipInfo, CommandBlock, CommandStatus, Direction, FlashInfo};
 use thiserror::Error;
 
 pub mod bootfile;
@@ -32,71 +32,82 @@ pub enum UsbStep<'a, T> {
     Finished(Result<T, RockUsbOperationError>),
 }
 
-enum Operation<T> {
+pub trait FromOperation {
+    fn from_operation(io: &[u8], status: &CommandStatus) -> Result<Self, RockUsbOperationError>
+    where
+        Self: Sized;
+}
+
+enum Operation {
     CommandBlock,
     IO,
     CommandStatus,
-    Final(Result<T, RockUsbOperationError>),
+    Finish,
 }
 
 enum IOBytes<'a> {
-    Inband,
-    Mutable(&'a mut [u8]),
-    Inmutable(&'a [u8]),
+    // Biggest transfer that's not a data read/write
+    Inband([u8; 16]),
+    Read(&'a mut [u8]),
+    Write(&'a [u8]),
 }
 
-pub struct UsbOperation<'a, T, const N: usize> {
+pub struct UsbOperation<'a, T> {
     command: CommandBlock,
-    bytes: [u8; N],
+    command_bytes: [u8; 31],
     data: IOBytes<'a>,
-    next: Operation<T>,
+    next: Operation,
+    _result: PhantomData<T>,
 }
 
-impl<'a, T, const N: usize> UsbOperation<'a, T, N>
+impl<'a, T> UsbOperation<'a, T>
 where
-    T: for<'b> TryFrom<&'b [u8]> + 'static,
+    T: FromOperation,
     T: std::fmt::Debug,
 {
     fn new(command: CommandBlock) -> Self {
         Self {
             command,
-            bytes: [0u8; N],
-            data: IOBytes::Inband,
+            command_bytes: [0u8; protocol::COMMAND_BLOCK_BYTES],
+            data: IOBytes::Inband([0u8; 16]),
             next: Operation::CommandBlock,
+            _result: PhantomData,
         }
     }
 
-    fn new_mut(command: CommandBlock, data: &'a mut [u8]) -> Self {
+    fn new_write(command: CommandBlock, data: &'a [u8]) -> Self {
         Self {
             command,
-            bytes: [0u8; N],
-            data: IOBytes::Mutable(data),
+            command_bytes: [0u8; protocol::COMMAND_BLOCK_BYTES],
+            data: IOBytes::Write(data),
             next: Operation::CommandBlock,
+            _result: PhantomData,
         }
     }
 
-    fn new_data(command: CommandBlock, data: &'a [u8]) -> Self {
+    fn new_read(command: CommandBlock, data: &'a mut [u8]) -> Self {
         Self {
             command,
-            bytes: [0u8; N],
-            data: IOBytes::Inmutable(data),
+            command_bytes: [0u8; protocol::COMMAND_BLOCK_BYTES],
+            data: IOBytes::Read(data),
             next: Operation::CommandBlock,
+            _result: PhantomData,
         }
     }
 
     fn io_data_mut(&mut self) -> &mut [u8] {
         match &mut self.data {
-            IOBytes::Inband => &mut self.bytes,
-            IOBytes::Mutable(ref mut data) => data,
-            IOBytes::Inmutable(_) => unreachable!(),
+            IOBytes::Inband(ref mut data) => data,
+            IOBytes::Read(ref mut data) => data,
+            IOBytes::Write(_) => unreachable!(),
         }
     }
 
     fn io_data(&mut self) -> &[u8] {
         match self.data {
-            IOBytes::Inband => &self.bytes,
-            IOBytes::Mutable(ref data) => data,
-            IOBytes::Inmutable(ref data) => data,
+            IOBytes::Inband(ref data) => data,
+            IOBytes::Read(ref data) => data,
+            IOBytes::Write(ref data) => data,
         }
     }
 
@@ -105,10 +116,10 @@ where
         std::mem::swap(&mut self.next, &mut next);
         match next {
             Operation::CommandBlock => {
-                let len = self.command.to_bytes(&mut self.bytes);
+                let len = self.command.to_bytes(&mut self.command_bytes);
                 self.next = Operation::IO;
                 UsbStep::WriteBulk {
-                    data: &self.bytes[..len],
+                    data: &self.command_bytes[..len],
                 }
             }
             Operation::IO => {
@@ -124,54 +135,84 @@ where
                 }
             }
             Operation::CommandStatus => {
-                let len = self.command.transfer_length() as usize;
-                self.next = Operation::Final(
-                    T::try_from(&self.io_data()[..len]).map_err(|_e| RockUsbOperationError::TODO),
-                );
+                self.next = Operation::Finish;
                 UsbStep::ReadBulk {
-                    data: &mut self.bytes[..protocol::COMMAND_STATUS_BYTES],
+                    data: &mut self.command_bytes[..protocol::COMMAND_STATUS_BYTES],
                 }
             }
-            Operation::Final(r) => UsbStep::Finished(r),
+            Operation::Finish => {
+                let r = CommandStatus::from_bytes(&self.command_bytes)
+                    .map_err(|_e| RockUsbOperationError::TODO)
+                    .and_then(|csw| {
+                        let transfer = self.command.transfer_length() as usize;
+                        T::from_operation(&self.io_data()[..transfer], &csw)
+                    });
+                UsbStep::Finished(r)
+            }
         }
     }
 }
 
-pub fn chip_info() -> UsbOperation<'static, [u8; 16], 31> {
-    UsbOperation::new(CommandBlock::chip_info())
-}
-
-pub fn flash_info() -> UsbOperation<'static, [u8; 16], 31> {
-    UsbOperation::new(CommandBlock::flash_info())
-}
-
-#[derive(Debug)]
-pub struct Dummy {}
-
-impl TryFrom<&[u8]> for Dummy {
-    type Error = Infallible;
-
-    fn try_from(_value: &[u8]) -> Result<Self, Self::Error> {
-        Ok(Dummy {})
+impl FromOperation for ChipInfo {
+    fn from_operation(io: &[u8], _status: &CommandStatus) -> Result<Self, RockUsbOperationError>
+    where
+        Self: Sized,
+    {
+        let data = io.try_into().map_err(|_e| RockUsbOperationError::TODO)?;
+        Ok(ChipInfo::from_bytes(data))
     }
 }
 
-pub fn read_lba(start_sector: u32, read: &mut [u8]) -> UsbOperation<'_, Dummy, 31> {
+pub fn chip_info() -> UsbOperation<'static, ChipInfo> {
+    UsbOperation::new(CommandBlock::chip_info())
+}
+
+impl FromOperation for FlashInfo {
+    fn from_operation(io: &[u8], _status: &CommandStatus) -> Result<Self, RockUsbOperationError>
+    where
+        Self: Sized,
+    {
+        let data = io.try_into().map_err(|_e| RockUsbOperationError::TODO)?;
+        Ok(FlashInfo::from_bytes(data))
+    }
+}
+pub fn flash_info() -> UsbOperation<'static, FlashInfo> {
+    UsbOperation::new(CommandBlock::flash_info())
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(transparent)]
+pub struct Transferred(u32);
+impl FromOperation for Transferred {
+    fn from_operation(io: &[u8], status: &CommandStatus) -> Result<Self, RockUsbOperationError>
+    where
+        Self: Sized,
+    {
+        let totransfer = io.len() as u32;
+        if status.residue > totransfer {
+            Err(RockUsbOperationError::TODO)
+        } else {
+            Ok(Transferred(totransfer - status.residue))
+        }
+    }
+}
+
+pub fn read_lba(start_sector: u32, read: &mut [u8]) -> UsbOperation<'_, Transferred> {
     assert_eq!(read.len() % 512, 0, "Not a multiple of 512: {}", read.len());
-    UsbOperation::new_mut(
+    UsbOperation::new_read(
         CommandBlock::read_lba(start_sector, (read.len() / 512) as u16),
         read,
     )
 }
 
-pub fn write_lba(start_sector: u32, write: &[u8]) -> UsbOperation<'_, Dummy, 31> {
+pub fn write_lba(start_sector: u32, write: &[u8]) -> UsbOperation<'_, Transferred> {
     assert_eq!(
         write.len() % 512,
         0,
         "Not a multiple of 512: {}",
         write.len()
     );
-    UsbOperation::new_data(
+    UsbOperation::new_write(
         CommandBlock::write_lba(start_sector, (write.len() / 512) as u16),
         write,
     )
@@ -211,11 +252,16 @@ mod test {
         match o.step() {
             UsbStep::ReadBulk { data } if data.len() == protocol::COMMAND_STATUS_BYTES => {
                 data.fill(0);
+                /* signature */
+                data[0] = b'U';
+                data[1] = b'S';
+                data[2] = b'B';
+                data[3] = b'S';
                 /* tag */
-                data[0] = tag[0];
-                data[1] = tag[1];
-                data[2] = tag[2];
-                data[3] = tag[3];
+                data[4] = tag[0];
+                data[5] = tag[1];
+                data[6] = tag[2];
+                data[7] = tag[3];
                 // status good
                 data[12] = 0;
             }
@@ -225,7 +271,7 @@ mod test {
         match o.step() {
             UsbStep::Finished(Ok(info)) => {
                 assert_eq!(
-                    info,
+                    info.inner(),
                     [
                         0x38u8, 0x38, 0x35, 0x33, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
                         0x0, 0x0

@@ -43,10 +43,19 @@ enum CommandCode {
 
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum CommandStatusParseError {
-    #[error("Invalid command status signature: {0:x?}")]
+    #[error("Invalid signature: {0:x?}")]
     InvalidSignature([u8; 4]),
-    #[error("Invalid command status length: {0}")]
+    #[error("Invalid length: {0}")]
     InvalidLength(usize),
+    #[error("Invalid status: {0}")]
+    InvalidStatus(u8),
+}
+
+#[repr(u8)]
+#[derive(Debug, Eq, PartialEq, Clone, Copy, IntoPrimitive, TryFromPrimitive)]
+pub enum Status {
+    SUCCESS = 0,
+    FAILED = 1,
 }
 
 pub const COMMAND_STATUS_BYTES: usize = 13;
@@ -54,7 +63,7 @@ pub const COMMAND_STATUS_BYTES: usize = 13;
 pub struct CommandStatus {
     pub tag: u32,
     pub residue: u32,
-    pub status: u8,
+    pub status: Status,
 }
 
 impl CommandStatus {
@@ -63,7 +72,7 @@ impl CommandStatus {
         bytes.put_slice(b"USBS");
         bytes.put_u32(self.tag);
         bytes.put_u32_le(self.residue);
-        bytes.put_u8(self.status);
+        bytes.put_u8(self.status.into());
         COMMAND_STATUS_BYTES
     }
 
@@ -78,12 +87,37 @@ impl CommandStatus {
         }
         let tag = bytes.get_u32();
         let residue = bytes.get_u32_le();
-        let status = bytes.get_u8();
+        let status = Status::try_from(bytes.get_u8())
+            .map_err(|e| CommandStatusParseError::InvalidStatus(e.number))?;
         Ok(CommandStatus {
             tag,
             residue,
             status,
         })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ChipInfo([u8; 16]);
+impl ChipInfo {
+    pub fn from_bytes(data: [u8; 16]) -> Self {
+        ChipInfo(data)
+    }
+
+    pub fn inner(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FlashInfo([u8; 11]);
+impl FlashInfo {
+    pub fn from_bytes(data: [u8; 11]) -> Self {
+        FlashInfo(data)
+    }
+
+    pub fn inner(&self) -> &[u8] {
+        &self.0
     }
 }
 
@@ -118,7 +152,7 @@ impl CommandBlock {
     pub fn flash_info() -> CommandBlock {
         CommandBlock {
             tag: fastrand::u32(..),
-            transfer_length: 16,
+            transfer_length: 11,
             flags: Direction::In,
             lun: 0,
             cdb_length: 0x6,
@@ -236,7 +270,7 @@ mod test {
         let c = CommandStatus {
             tag: 0x11223344,
             residue: 0x55667788,
-            status: 0x99,
+            status: Status::SUCCESS,
         };
         let mut b = [0u8; 13];
         c.to_bytes(&mut b);
