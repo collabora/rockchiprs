@@ -98,14 +98,14 @@ impl OperationSteps<()> for MaskOperation<'_> {
                     .copy_from_slice(&self.data[self.written..self.written + chunksize]);
                 self.written += chunksize;
                 let chunk = match chunksize {
-                    4095 => {
-                        // Add extra 0 to avoid splitting crc over two blocks
-                        self.block[4095] = 0;
+                    4096 => {
                         crc.update(&self.block);
                         self.steps = MaskSteps::Writing(crc);
                         &self.block[..]
                     }
-                    4096 => {
+                    4095 => {
+                        // Add extra 0 to avoid splitting crc over two blocks
+                        self.block[4095] = 0;
                         crc.update(&self.block);
                         self.steps = MaskSteps::Writing(crc);
                         &self.block[..]
@@ -131,7 +131,7 @@ impl OperationSteps<()> for MaskOperation<'_> {
                     request: 0xc,
                     value: 0,
                     index: self.area,
-                    data: &chunk,
+                    data: chunk,
                 }
             }
             MaskSteps::Dummy => {
@@ -147,22 +147,11 @@ impl OperationSteps<()> for MaskOperation<'_> {
             }
             MaskSteps::Done => UsbStep::Finished(Ok(())),
         }
-        /*
-        if self.send_dummy {
-            self.block[0] = 0;
-            UsbStep::WriteControl {
-                request_type: 0x40,
-                request: 0xc,
-                value: 0,
-                index: self.area,
-                data: &self.block[0..1],
-            }
-        } else if self.written == self.data.len() {
-            UsbStep::Finished(Ok(()))
-        } else {
-        }
-        */
     }
+}
+
+pub fn write_area(area: u16, data: &[u8]) -> MaskOperation {
+    MaskOperation::new(area, data)
 }
 
 pub trait FromOperation {

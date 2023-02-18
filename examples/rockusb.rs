@@ -27,6 +27,10 @@ fn find_device() -> Result<(DeviceHandle<rusb::GlobalContext>, u8, u8, u8)> {
             continue;
         }
 
+        println!("=> {}", desc.usb_version());
+        println!("=> {:#?}", desc);
+        println!("=> {:#?}", d);
+
         for c in 0..desc.num_configurations() {
             let config = d.config_descriptor(c)?;
             for i in config.interfaces() {
@@ -72,7 +76,6 @@ fn find_device() -> Result<(DeviceHandle<rusb::GlobalContext>, u8, u8, u8)> {
 
 struct LibUsbTransport {
     handle: DeviceHandle<rusb::GlobalContext>,
-    interface: u8,
     ep_in: u8,
     ep_out: u8,
     offset: u32,
@@ -83,14 +86,14 @@ struct LibUsbTransport {
 
 impl LibUsbTransport {
     fn new(
-        handle: DeviceHandle<rusb::GlobalContext>,
+        mut handle: DeviceHandle<rusb::GlobalContext>,
         interface: u8,
         ep_in: u8,
         ep_out: u8,
     ) -> Self {
+        handle.claim_interface(interface).unwrap();
         Self {
             handle,
-            interface,
             ep_in,
             ep_out,
             offset: 0,
@@ -158,6 +161,10 @@ impl LibUsbTransport {
         Ok(self
             .handle_operation(rockusb::write_lba(start_sector, write))?
             .into())
+    }
+
+    pub fn write_maskrom_area(&mut self, area: u16, data: &[u8]) -> Result<()> {
+        Ok(self.handle_operation(rockusb::write_area(area, data))?)
     }
 }
 
@@ -268,7 +275,6 @@ impl Seek for LibUsbTransport {
 
 fn read_flash_info() -> Result<()> {
     let (mut handle, interface, input, output) = find_device()?;
-    handle.claim_interface(interface)?;
     let mut transport = LibUsbTransport::new(handle, interface, input, output);
     let info = transport.flash_info()?;
     println!("Raw Flash Info: {:0x?}", info);
@@ -283,7 +289,6 @@ fn read_flash_info() -> Result<()> {
 
 fn read_chip_info() -> Result<()> {
     let (mut handle, interface, input, output) = find_device()?;
-    handle.claim_interface(interface)?;
     let mut transport = LibUsbTransport::new(handle, interface, input, output);
     println!("Chip Info: {:0x?}", transport.chip_info()?);
 
@@ -292,7 +297,6 @@ fn read_chip_info() -> Result<()> {
 
 fn read_lba(offset: u32, length: u16, path: &Path) -> Result<()> {
     let (mut handle, interface, input, output) = find_device()?;
-    handle.claim_interface(interface)?;
 
     let mut data = Vec::new();
     data.resize(length as usize * 512, 0);
@@ -311,7 +315,6 @@ fn read_lba(offset: u32, length: u16, path: &Path) -> Result<()> {
 
 fn write_lba(offset: u32, length: u16, path: &Path) -> Result<()> {
     let (mut handle, interface, input, output) = find_device()?;
-    handle.claim_interface(interface)?;
 
     let mut data = Vec::new();
     data.resize(length as usize * 512, 0);
@@ -348,7 +351,6 @@ fn find_bmap(img: &Path) -> Option<PathBuf> {
 
 fn write_bmap(path: &Path) -> Result<()> {
     let (mut handle, interface, input, output) = find_device()?;
-    handle.claim_interface(interface)?;
 
     let bmap_path = find_bmap(path).ok_or(anyhow!("Failed to find bmap"))?;
     println!("Using bmap file: {}", path.display());
@@ -424,7 +426,7 @@ fn download_entry(
     header: RkBootHeaderEntry,
     code: u16,
     file: &mut File,
-    handle: &DeviceHandle<rusb::GlobalContext>,
+    transport: &mut LibUsbTransport,
 ) -> Result<()> {
     for i in 0..header.count {
         let mut entry: RkBootEntryBytes = [0; 57];
@@ -443,23 +445,8 @@ fn download_entry(
         file.seek(SeekFrom::Start(entry.data_offset as u64))?;
         file.read_exact(&mut data)?;
 
-        // Avoid splitting the 2 byte crc in two 4096 byte chunks
-        if data.len() % 4096 == 4095 {
-            data.push(0);
-        }
+        transport.write_maskrom_area(code, &data)?;
 
-        let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740).checksum(&data);
-        data.push((crc >> 8) as u8);
-        data.push((crc & 0xff) as u8);
-        println!("CRC: {:x}", crc);
-        for chunk in data.chunks(4096) {
-            handle.write_control(0x40, 0xc, 0, code, chunk, Duration::from_secs(5))?;
-        }
-
-        // Send a single 0 byte to signal eof if every chunk was exactly 4096 bytes
-        if data.len() % 4096 == 0 {
-            handle.write_control(0x40, 0xc, 0, code, &[0u8], Duration::from_secs(5))?;
-        }
         println!("Done!... waiting {}ms", entry.data_delay);
         if entry.data_delay > 0 {
             sleep(Duration::from_millis(entry.data_delay as u64));
@@ -478,10 +465,10 @@ fn download_boot(path: &Path) -> Result<()> {
         RkBootHeader::from_bytes(&header).ok_or_else(|| anyhow!("Failed to parse header"))?;
 
     let (mut handle, interface, input, output) = find_device()?;
-    handle.claim_interface(interface)?;
+    let mut transport = LibUsbTransport::new(handle, interface, input, output);
 
-    download_entry(header.entry_471, 0x471, &mut file, &mut handle)?;
-    download_entry(header.entry_472, 0x472, &mut file, &mut handle)?;
+    download_entry(header.entry_471, 0x471, &mut file, &mut transport)?;
+    download_entry(header.entry_472, 0x472, &mut file, &mut transport)?;
 
     Ok(())
 }
@@ -505,7 +492,6 @@ fn handle_client(transport: &mut LibUsbTransport, mut stream: TcpStream) -> Resu
 
 fn run_nbd() -> Result<()> {
     let (mut handle, interface, input, output) = find_device()?;
-    handle.claim_interface(interface)?;
 
     let mut transport = LibUsbTransport::new(handle, interface, input, output);
 
