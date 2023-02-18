@@ -516,16 +516,14 @@ fn run_nbd() -> Result<()> {
         listener.local_addr()?
     );
 
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => match handle_client(&mut transport, stream) {
-                Ok(_) => {}
-                Err(e) => {
-                    eprintln!("error: {}", e);
-                }
-            },
-            Err(_) => {
-                println!("Error");
+    let mut streams = listener.incoming().into_iter();
+    for stream in streams.next().transpose()? {
+        match handle_client(&mut transport, stream) {
+            Ok(_) => {
+                println!("nbd client disconnected");
+            }
+            Err(e) => {
+                eprintln!("nbd error: {}", e);
             }
         }
     }
