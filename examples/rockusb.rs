@@ -2,6 +2,7 @@ use std::{
     ffi::OsStr,
     fs::File,
     io::{BufWriter, Read, Seek, SeekFrom, Write},
+    net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     thread::sleep,
     time::Duration,
@@ -126,7 +127,7 @@ impl LibUsbTransport {
                     index,
                     data,
                 } => {
-                    handle.write_control(
+                    self.handle.write_control(
                         request_type,
                         request,
                         value,
@@ -237,6 +238,16 @@ impl Write for LibUsbTransport {
     }
 }
 
+impl Read for LibUsbTransport {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let toread = buf.len().min(128 * 512);
+        assert!(toread % 512 == 0);
+        self.read_lba(self.offset, &mut buf[0..toread]).unwrap();
+        self.offset += toread as u32 / 512;
+        Ok(toread)
+    }
+}
+
 impl Seek for LibUsbTransport {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         self.flush()?;
@@ -259,7 +270,13 @@ fn read_flash_info() -> Result<()> {
     let (mut handle, interface, input, output) = find_device()?;
     handle.claim_interface(interface)?;
     let mut transport = LibUsbTransport::new(handle, interface, input, output);
-    println!("Flash Info: {:0x?}", transport.flash_info()?);
+    let info = transport.flash_info()?;
+    println!("Raw Flash Info: {:0x?}", info);
+    println!(
+        "Flash size: {} MB ({} sectors)",
+        info.sectors() / 2048,
+        info.sectors()
+    );
 
     Ok(())
 }
@@ -469,6 +486,53 @@ fn download_boot(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn handle_client(transport: &mut LibUsbTransport, mut stream: TcpStream) -> Result<()> {
+    let flash = transport.flash_info()?;
+
+    let e = nbd::Export {
+        size: flash.sectors() as u64 * 512,
+        readonly: false,
+        ..Default::default()
+    };
+
+    println!("Connection!");
+
+    nbd::server::handshake(&mut stream, &e)?;
+    println!("Shook hands!");
+    nbd::server::transmission(&mut stream, transport)?;
+    Ok(())
+}
+
+fn run_nbd() -> Result<()> {
+    let (mut handle, interface, input, output) = find_device()?;
+    handle.claim_interface(interface)?;
+
+    let mut transport = LibUsbTransport::new(handle, interface, input, output);
+
+    let listener = TcpListener::bind("127.0.0.1:10809").unwrap();
+
+    println!(
+        "Listening for nbd connection on: {:?}",
+        listener.local_addr()?
+    );
+
+    for stream in listener.incoming() {
+        match stream {
+            Ok(stream) => match handle_client(&mut transport, stream) {
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("error: {}", e);
+                }
+            },
+            Err(_) => {
+                println!("Error");
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, clap::Subcommand)]
 enum Command {
     ParseBoot {
@@ -492,6 +556,8 @@ enum Command {
     },
     ChipInfo,
     FlashInfo,
+    // Run/expose device as a network block device
+    Nbd,
 }
 
 #[derive(clap::Parser)]
@@ -518,5 +584,6 @@ fn main() -> Result<()> {
         Command::WriteBmap { path } => write_bmap(&path),
         Command::ChipInfo => read_chip_info(),
         Command::FlashInfo => read_flash_info(),
+        Command::Nbd => run_nbd(),
     }
 }

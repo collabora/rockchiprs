@@ -116,6 +116,16 @@ impl FlashInfo {
         FlashInfo(data)
     }
 
+    /// size in 512 byte sectors
+    pub fn sectors(&self) -> u32 {
+        self.0.as_slice().get_u32_le()
+    }
+
+    /// Block size in 512 bytes sectors
+    pub fn block_size_sectors(&self) -> u16 {
+        (&self.0[4..]).get_u16_le()
+    }
+
     pub fn inner(&self) -> &[u8] {
         &self.0
     }

@@ -114,7 +114,7 @@ impl OperationSteps<()> for MaskOperation<'_> {
                         crc.update(&self.block[0..end]);
                         let crc = crc.finalize();
                         self.block[end] = (crc >> 8) as u8;
-                        self.block[end + 1] = (crc >> 0xff) as u8;
+                        self.block[end + 1] = (crc & 0xff) as u8;
                         end += 2;
                         if end == 4096 {
                             self.steps = MaskSteps::Dummy;
