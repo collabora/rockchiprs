@@ -14,7 +14,7 @@ use flate2::read::GzDecoder;
 use rockusb::{
     bootfile::{RkBootEntry, RkBootEntryBytes, RkBootHeader, RkBootHeaderBytes, RkBootHeaderEntry},
     protocol::{ChipInfo, FlashInfo},
-    FromOperation, UsbOperation,
+    OperationSteps,
 };
 use rusb::DeviceHandle;
 
@@ -99,10 +99,9 @@ impl LibUsbTransport {
         }
     }
 
-    fn handle_operation<T>(&mut self, mut operation: UsbOperation<T>) -> Result<T>
+    fn handle_operation<O, T>(&mut self, mut operation: O) -> Result<T>
     where
-        T: FromOperation,
-        T: std::fmt::Debug,
+        O: OperationSteps<T>,
     {
         loop {
             let step = operation.step();
@@ -120,6 +119,22 @@ impl LibUsbTransport {
                         .context("Failed to read")?;
                 }
                 rockusb::UsbStep::Finished(r) => break r.map_err(|e| e.into()),
+                rockusb::UsbStep::WriteControl {
+                    request_type,
+                    request,
+                    value,
+                    index,
+                    data,
+                } => {
+                    handle.write_control(
+                        request_type,
+                        request,
+                        value,
+                        index,
+                        data,
+                        Duration::from_secs(5),
+                    )?;
+                }
             }
         }
     }

@@ -1,6 +1,8 @@
 use std::marker::PhantomData;
 
-use protocol::{ChipInfo, CommandBlock, CommandStatus, Direction, FlashInfo};
+use protocol::{
+    ChipInfo, CommandBlock, CommandStatus, CommandStatusParseError, Direction, FlashInfo,
+};
 use thiserror::Error;
 
 pub mod bootfile;
@@ -8,11 +10,36 @@ pub mod protocol;
 
 #[derive(Debug, Clone, Eq, PartialEq, Error)]
 pub enum RockUsbOperationError {
-    #[error("Setup good error types")]
-    TODO,
+    #[error("Tag mismatch between command and status")]
+    TagMismatch,
+    #[error("Incorrect status Signature receveived: {0:?}")]
+    InvalidStatusSignature([u8; 4]),
+    #[error("Invalid status status: {0}")]
+    InvalidStatusStatus(u8),
+    #[error("Invalid status data length")]
+    InvalidStatusLength,
+    #[error("Failed to parse reply")]
+    ReplyParseFailure,
+    #[error("Device indicated operation failed")]
+    FailedStatus,
 }
 
-pub enum MaskRomStep<'a> {
+impl From<CommandStatusParseError> for RockUsbOperationError {
+    fn from(e: CommandStatusParseError) -> Self {
+        match e {
+            CommandStatusParseError::InvalidSignature(s) => {
+                RockUsbOperationError::InvalidStatusSignature(s)
+            }
+            CommandStatusParseError::InvalidLength(_) => RockUsbOperationError::InvalidStatusLength,
+            CommandStatusParseError::InvalidStatus(s) => {
+                RockUsbOperationError::InvalidStatusStatus(s)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum UsbStep<'a, T> {
     WriteControl {
         request_type: u8,
         request: u8,
@@ -20,16 +47,122 @@ pub enum MaskRomStep<'a> {
         index: u16,
         data: &'a [u8],
     },
-    FillData {
+    WriteBulk {
+        data: &'a [u8],
+    },
+    ReadBulk {
         data: &'a mut [u8],
     },
+    Finished(Result<T, RockUsbOperationError>),
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum UsbStep<'a, T> {
-    WriteBulk { data: &'a [u8] },
-    ReadBulk { data: &'a mut [u8] },
-    Finished(Result<T, RockUsbOperationError>),
+pub trait OperationSteps<T> {
+    fn step(&mut self) -> UsbStep<T>;
+}
+
+enum MaskSteps {
+    Writing(crc::Digest<'static, u16>),
+    Dummy,
+    Done,
+}
+
+pub struct MaskOperation<'a> {
+    written: usize,
+    block: [u8; 4096],
+    data: &'a [u8],
+    area: u16,
+    steps: MaskSteps,
+}
+
+const CRC: crc::Crc<u16> = crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740);
+impl<'a> MaskOperation<'a> {
+    fn new(area: u16, data: &'a [u8]) -> Self {
+        MaskOperation {
+            written: 0,
+            block: [0; 4096],
+            data,
+            area,
+            steps: MaskSteps::Writing(CRC.digest()),
+        }
+    }
+}
+
+impl OperationSteps<()> for MaskOperation<'_> {
+    fn step(&mut self) -> UsbStep<()> {
+        let mut current = MaskSteps::Done;
+        std::mem::swap(&mut self.steps, &mut current);
+        match current {
+            MaskSteps::Writing(mut crc) => {
+                let chunksize = 4096.min(self.data.len() - self.written);
+                self.block[..chunksize]
+                    .copy_from_slice(&self.data[self.written..self.written + chunksize]);
+                self.written += chunksize;
+                let chunk = match chunksize {
+                    4095 => {
+                        // Add extra 0 to avoid splitting crc over two blocks
+                        self.block[4095] = 0;
+                        crc.update(&self.block);
+                        self.steps = MaskSteps::Writing(crc);
+                        &self.block[..]
+                    }
+                    4096 => {
+                        crc.update(&self.block);
+                        self.steps = MaskSteps::Writing(crc);
+                        &self.block[..]
+                    }
+                    mut end => {
+                        crc.update(&self.block[0..end]);
+                        let crc = crc.finalize();
+                        self.block[end] = (crc >> 8) as u8;
+                        self.block[end + 1] = (crc >> 0xff) as u8;
+                        end += 2;
+                        if end == 4096 {
+                            self.steps = MaskSteps::Dummy;
+                        } else {
+                            self.steps = MaskSteps::Done;
+                        }
+
+                        &self.block[0..end]
+                    }
+                };
+
+                UsbStep::WriteControl {
+                    request_type: 0x40,
+                    request: 0xc,
+                    value: 0,
+                    index: self.area,
+                    data: &chunk,
+                }
+            }
+            MaskSteps::Dummy => {
+                self.steps = MaskSteps::Done;
+                self.block[0] = 0;
+                UsbStep::WriteControl {
+                    request_type: 0x40,
+                    request: 0xc,
+                    value: 0,
+                    index: self.area,
+                    data: &self.block[0..1],
+                }
+            }
+            MaskSteps::Done => UsbStep::Finished(Ok(())),
+        }
+        /*
+        if self.send_dummy {
+            self.block[0] = 0;
+            UsbStep::WriteControl {
+                request_type: 0x40,
+                request: 0xc,
+                value: 0,
+                index: self.area,
+                data: &self.block[0..1],
+            }
+        } else if self.written == self.data.len() {
+            UsbStep::Finished(Ok(()))
+        } else {
+        }
+        */
+    }
 }
 
 pub trait FromOperation {
@@ -60,11 +193,7 @@ pub struct UsbOperation<'a, T> {
     _result: PhantomData<T>,
 }
 
-impl<'a, T> UsbOperation<'a, T>
-where
-    T: FromOperation,
-    T: std::fmt::Debug,
-{
+impl<'a, T> UsbOperation<'a, T> {
     fn new(command: CommandBlock) -> Self {
         Self {
             command,
@@ -107,11 +236,17 @@ where
         match self.data {
             IOBytes::Inband(ref data) => data,
             IOBytes::Read(ref data) => data,
-            IOBytes::Write(ref data) => data,
+            IOBytes::Write(data) => data,
         }
     }
+}
 
-    pub fn step(&mut self) -> UsbStep<T> {
+impl<T> OperationSteps<T> for UsbOperation<'_, T>
+where
+    T: FromOperation,
+    T: std::fmt::Debug,
+{
+    fn step(&mut self) -> UsbStep<T> {
         let mut next = Operation::CommandBlock;
         std::mem::swap(&mut self.next, &mut next);
         match next {
@@ -142,10 +277,16 @@ where
             }
             Operation::Finish => {
                 let r = CommandStatus::from_bytes(&self.command_bytes)
-                    .map_err(|_e| RockUsbOperationError::TODO)
+                    .map_err(RockUsbOperationError::from)
                     .and_then(|csw| {
-                        let transfer = self.command.transfer_length() as usize;
-                        T::from_operation(&self.io_data()[..transfer], &csw)
+                        if csw.status == protocol::Status::FAILED {
+                            Err(RockUsbOperationError::FailedStatus)
+                        } else if csw.tag == self.command.tag() {
+                            let transfer = self.command.transfer_length() as usize;
+                            T::from_operation(&self.io_data()[..transfer], &csw)
+                        } else {
+                            Err(RockUsbOperationError::TagMismatch)
+                        }
                     });
                 UsbStep::Finished(r)
             }
@@ -158,7 +299,9 @@ impl FromOperation for ChipInfo {
     where
         Self: Sized,
     {
-        let data = io.try_into().map_err(|_e| RockUsbOperationError::TODO)?;
+        let data = io
+            .try_into()
+            .map_err(|_e| RockUsbOperationError::ReplyParseFailure)?;
         Ok(ChipInfo::from_bytes(data))
     }
 }
@@ -172,7 +315,9 @@ impl FromOperation for FlashInfo {
     where
         Self: Sized,
     {
-        let data = io.try_into().map_err(|_e| RockUsbOperationError::TODO)?;
+        let data = io
+            .try_into()
+            .map_err(|_e| RockUsbOperationError::ReplyParseFailure)?;
         Ok(FlashInfo::from_bytes(data))
     }
 }
@@ -189,7 +334,7 @@ impl FromOperation for Transferred {
     {
         let totransfer = io.len() as u32;
         if status.residue > totransfer {
-            Err(RockUsbOperationError::TODO)
+            Err(RockUsbOperationError::ReplyParseFailure)
         } else {
             Ok(Transferred(totransfer - status.residue))
         }
@@ -235,7 +380,7 @@ mod test {
         // Write the command block
         let tag = match o.step() {
             UsbStep::WriteBulk { data } if data.len() == protocol::COMMAND_BLOCK_BYTES => {
-                [data[0], data[1], data[2], data[3]]
+                [data[4], data[5], data[6], data[7]]
             }
             o => panic!("Unexpected step: {:?}", o),
         };
