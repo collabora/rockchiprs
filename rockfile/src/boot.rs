@@ -32,6 +32,10 @@ impl RkTime {
 }
 
 pub type RkBootHeaderEntryBytes = [u8; 6];
+/// Entry in the boot header
+///
+/// Each boot header entry contains the count of [RkBootEntry]'s that are continous at the given
+/// offset in the boot file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RkBootHeaderEntry {
     pub count: u8,
@@ -55,13 +59,21 @@ impl RkBootHeaderEntry {
 }
 
 pub type RkBootEntryBytes = [u8; 57];
+/// Boot entry describing each data blob. data_offset and data_size define the range in the
+/// boot file. After uploading the blob to SoC a delay of data_delay miliseconds should be
+/// observed before uploading the next blob
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RkBootEntry {
+    /// size of this entry
     pub size: u8,
     pub type_: u32,
+    /// UTF-16 name
     pub name: [u16; 20],
+    /// Offset of data in the boot file
     pub data_offset: u32,
+    /// Size of data in the boot file
     pub data_size: u32,
+    /// Delay to observe after uploading to SoC
     pub data_delay: u32,
 }
 
@@ -91,6 +103,12 @@ impl RkBootEntry {
 }
 
 pub type RkBootHeaderBytes = [u8; 102];
+/// Boot header which can be found at the start of a boot file
+///
+/// The header contains three entry types; 0x471 which are the blobs that should be uploaded to the
+/// bootrom sram initially to setup ddr memory; 0x472 the blobs that should be uploaded to the
+/// bootrom ddr, typically implementing the complete usb protocol. And finally the loader entry
+/// which are the blobs meant to be used for a normal boot
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RkBootHeader {
     pub tag: [u8; 4],

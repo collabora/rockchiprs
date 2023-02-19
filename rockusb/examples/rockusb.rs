@@ -15,9 +15,9 @@ use flate2::read::GzDecoder;
 use rockfile::boot::{
     RkBootEntry, RkBootEntryBytes, RkBootHeader, RkBootHeaderBytes, RkBootHeaderEntry,
 };
-use rockusb::libusb::{DeviceUnavalable, LibUsbTransport};
+use rockusb::libusb::{DeviceUnavalable, Transport};
 
-fn read_flash_info(mut transport: LibUsbTransport) -> Result<()> {
+fn read_flash_info(mut transport: Transport) -> Result<()> {
     let info = transport.flash_info()?;
     println!("Raw Flash Info: {:0x?}", info);
     println!(
@@ -29,12 +29,12 @@ fn read_flash_info(mut transport: LibUsbTransport) -> Result<()> {
     Ok(())
 }
 
-fn read_chip_info(mut transport: LibUsbTransport) -> Result<()> {
+fn read_chip_info(mut transport: Transport) -> Result<()> {
     println!("Chip Info: {:0x?}", transport.chip_info()?);
     Ok(())
 }
 
-fn read_lba(mut transport: LibUsbTransport, offset: u32, length: u16, path: &Path) -> Result<()> {
+fn read_lba(mut transport: Transport, offset: u32, length: u16, path: &Path) -> Result<()> {
     let mut data = Vec::new();
     data.resize(length as usize * 512, 0);
     transport.read_lba(offset, &mut data)?;
@@ -48,7 +48,7 @@ fn read_lba(mut transport: LibUsbTransport, offset: u32, length: u16, path: &Pat
     Ok(())
 }
 
-fn write_lba(mut transport: LibUsbTransport, offset: u32, length: u16, path: &Path) -> Result<()> {
+fn write_lba(mut transport: Transport, offset: u32, length: u16, path: &Path) -> Result<()> {
     let mut data = Vec::new();
     data.resize(length as usize * 512, 0);
 
@@ -81,7 +81,7 @@ fn find_bmap(img: &Path) -> Option<PathBuf> {
     }
 }
 
-fn write_bmap(transport: LibUsbTransport, path: &Path) -> Result<()> {
+fn write_bmap(transport: Transport, path: &Path) -> Result<()> {
     let bmap_path = find_bmap(path).ok_or_else(|| anyhow!("Failed to find bmap"))?;
     println!("Using bmap file: {}", path.display());
 
@@ -112,7 +112,7 @@ fn download_entry(
     header: RkBootHeaderEntry,
     code: u16,
     file: &mut File,
-    transport: &mut LibUsbTransport,
+    transport: &mut Transport,
 ) -> Result<()> {
     for i in 0..header.count {
         let mut entry: RkBootEntryBytes = [0; 57];
@@ -142,7 +142,7 @@ fn download_entry(
     Ok(())
 }
 
-fn download_boot(mut transport: LibUsbTransport, path: &Path) -> Result<()> {
+fn download_boot(mut transport: Transport, path: &Path) -> Result<()> {
     let mut file = File::open(path)?;
     let mut header: RkBootHeaderBytes = [0; 102];
     file.read_exact(&mut header)?;
@@ -156,7 +156,7 @@ fn download_boot(mut transport: LibUsbTransport, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn run_nbd(transport: LibUsbTransport) -> Result<()> {
+fn run_nbd(transport: Transport) -> Result<()> {
     let listener = TcpListener::bind("127.0.0.1:10809").unwrap();
 
     println!(

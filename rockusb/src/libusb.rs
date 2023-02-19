@@ -5,12 +5,13 @@ use std::{
 };
 
 use crate::{
+    operation::{OperationSteps, UsbStep},
     protocol::{ChipInfo, FlashId, FlashInfo, SECTOR_SIZE},
-    OperationSteps,
 };
 use rusb::{DeviceHandle, GlobalContext};
 use thiserror::Error;
 
+/// Error indicate a device is not available
 #[derive(Debug, Clone, Eq, PartialEq, Error)]
 #[error("Device is not available: {device:?} {error}")]
 pub struct DeviceUnavalable {
@@ -20,14 +21,15 @@ pub struct DeviceUnavalable {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Error)]
-pub enum LibUsbError {
+pub enum Error {
     #[error("Usb error: {0}")]
     UsbError(#[from] rusb::Error),
     #[error("Operation error: {0}")]
-    OperationError(#[from] crate::RockUsbOperationError),
+    OperationError(#[from] crate::operation::UsbOperationError),
 }
-type Result<T> = std::result::Result<T, LibUsbError>;
+type Result<T> = std::result::Result<T, Error>;
 
+/// Rockchip devices
 pub struct Devices {
     devices: rusb::DeviceList<GlobalContext>,
 }
@@ -38,18 +40,20 @@ impl Devices {
         Ok(Self { devices })
     }
 
+    /// Create an Iterator over found Rockchip device
     pub fn iter(&self) -> DevicesIter {
         let iter = self.devices.iter();
         DevicesIter { iter }
     }
 }
 
+/// Iterator over found Rockchip device
 pub struct DevicesIter<'a> {
     iter: rusb::Devices<'a, GlobalContext>,
 }
 
 impl Iterator for DevicesIter<'_> {
-    type Item = std::result::Result<LibUsbTransport, DeviceUnavalable>;
+    type Item = std::result::Result<Transport, DeviceUnavalable>;
 
     fn next(&mut self) -> Option<Self::Item> {
         for device in self.iter.by_ref() {
@@ -65,19 +69,20 @@ impl Iterator for DevicesIter<'_> {
                 Err(error) => return Some(Err(DeviceUnavalable { device, error })),
             };
 
-            return Some(LibUsbTransport::from_usb_device(handle));
+            return Some(Transport::from_usb_device(handle));
         }
         None
     }
 }
 
-pub struct LibUsbTransport {
+/// libusb based Transport for rockusb operation
+pub struct Transport {
     handle: DeviceHandle<rusb::GlobalContext>,
     ep_in: u8,
     ep_out: u8,
 }
 
-impl LibUsbTransport {
+impl Transport {
     fn new(
         mut handle: DeviceHandle<rusb::GlobalContext>,
         interface: u8,
@@ -97,6 +102,7 @@ impl LibUsbTransport {
         })
     }
 
+    /// Create a new transport from an exist device handle
     pub fn from_usb_device(
         handle: rusb::DeviceHandle<GlobalContext>,
     ) -> std::result::Result<Self, DeviceUnavalable> {
@@ -126,7 +132,7 @@ impl LibUsbTransport {
                     });
 
                     if let (Some(input), Some(output)) = (input, output) {
-                        return LibUsbTransport::new(
+                        return Transport::new(
                             handle,
                             i_desc.setting_number(),
                             input.address(),
@@ -142,22 +148,29 @@ impl LibUsbTransport {
         })
     }
 
-    pub fn io(&mut self) -> Result<LibUsbTransportIO<&mut Self>> {
-        LibUsbTransportIO::new(self)
+    /// Create an IO object which implements [Read](std::io::Read), [Write](std::io::Write) and
+    /// [Seek](std::io::Seek)
+    pub fn io(&mut self) -> Result<TransportIO<&mut Self>> {
+        TransportIO::new(self)
     }
 
-    pub fn into_io(self) -> Result<LibUsbTransportIO<Self>> {
-        LibUsbTransportIO::new(self)
+    /// Convert into an IO object which implements [Read](std::io::Read), [Write](std::io::Write) and
+    /// [Seek](std::io::Seek)
+    pub fn into_io(self) -> Result<TransportIO<Self>> {
+        TransportIO::new(self)
     }
 
+    /// Get a reference to the underlying device handle
     pub fn handle(&mut self) -> &mut DeviceHandle<GlobalContext> {
         &mut self.handle
     }
 
+    /// Get the bus number of the current device
     pub fn bus_number(&self) -> u8 {
         self.handle.device().bus_number()
     }
 
+    /// Get the bus address of the current device
     pub fn address(&self) -> u8 {
         self.handle.device().address()
     }
@@ -169,18 +182,18 @@ impl LibUsbTransport {
         loop {
             let step = operation.step();
             match step {
-                crate::UsbStep::WriteBulk { data } => {
+                UsbStep::WriteBulk { data } => {
                     let _written =
                         self.handle
                             .write_bulk(self.ep_out, data, Duration::from_secs(5))?;
                 }
-                crate::UsbStep::ReadBulk { data } => {
+                UsbStep::ReadBulk { data } => {
                     let _read = self
                         .handle
                         .read_bulk(self.ep_in, data, Duration::from_secs(5))?;
                 }
-                crate::UsbStep::Finished(r) => break r.map_err(|e| e.into()),
-                crate::UsbStep::WriteControl {
+                UsbStep::Finished(r) => break r.map_err(|e| e.into()),
+                UsbStep::WriteControl {
                     request_type,
                     request,
                     value,
@@ -200,34 +213,49 @@ impl LibUsbTransport {
         }
     }
 
+    /// retrieve SoC flash identifier
     pub fn flash_id(&mut self) -> Result<FlashId> {
-        self.handle_operation(crate::flash_id())
+        self.handle_operation(crate::operation::flash_id())
     }
 
+    /// retrieve SoC flash info
     pub fn flash_info(&mut self) -> Result<FlashInfo> {
-        self.handle_operation(crate::flash_info())
+        self.handle_operation(crate::operation::flash_info())
     }
 
+    /// retrieve SoC chip info
     pub fn chip_info(&mut self) -> Result<ChipInfo> {
-        self.handle_operation(crate::chip_info())
+        self.handle_operation(crate::operation::chip_info())
     }
 
+    /// read from the flash
+    ///
+    /// start_sector with [SECTOR_SIZE](crate::protocol::SECTOR_SIZE) sectors. the data to be read
+    /// must be a multiple of [SECTOR_SIZE](crate::protocol::SECTOR_SIZE) bytes
     pub fn read_lba(&mut self, start_sector: u32, read: &mut [u8]) -> Result<u32> {
-        self.handle_operation(crate::read_lba(start_sector, read))
+        self.handle_operation(crate::operation::read_lba(start_sector, read))
             .map(|t| t.into())
     }
 
+    /// Create operation to read an lba from the flash
+    ///
+    /// start_sector based on [SECTOR_SIZE](crate::protocol::SECTOR_SIZE) sectors. the data to be
+    /// written must be a multiple of [SECTOR_SIZE](crate::protocol::SECTOR_SIZE) bytes
     pub fn write_lba(&mut self, start_sector: u32, write: &[u8]) -> Result<u32> {
-        self.handle_operation(crate::write_lba(start_sector, write))
+        self.handle_operation(crate::operation::write_lba(start_sector, write))
             .map(|t| t.into())
     }
 
+    /// Write a specific area while in maskrom mode; typically 0x471 or 0x472 data as retrieved from a
+    /// rockchip boot file
     pub fn write_maskrom_area(&mut self, area: u16, data: &[u8]) -> Result<()> {
-        self.handle_operation(crate::write_area(area, data))
+        self.handle_operation(crate::operation::write_area(area, data))
     }
 }
 
-pub struct LibUsbTransportIO<T> {
+/// IO object which implements [Read](std::io::Read), [Write](std::io::Write) and
+/// [Seek](std::io::Seek)
+pub struct TransportIO<T> {
     transport: T,
     size: u64,
     // Read/Write offset in bytes
@@ -237,11 +265,12 @@ pub struct LibUsbTransportIO<T> {
     state: BufferState,
 }
 
-impl<T> LibUsbTransportIO<T>
+impl<T> TransportIO<T>
 where
-    T: BorrowMut<LibUsbTransport>,
+    T: BorrowMut<Transport>,
 {
     const MAXIO_SIZE: u64 = 128 * crate::protocol::SECTOR_SIZE as u64;
+    /// Create a new IO object around a given transport
     pub fn new(mut transport: T) -> Result<Self> {
         let info = transport.borrow_mut().flash_info()?;
         Ok(Self {
@@ -253,14 +282,17 @@ where
         })
     }
 
-    pub fn inner(&mut self) -> &mut LibUsbTransport {
+    /// Get a reference to the inner transport
+    pub fn inner(&mut self) -> &mut Transport {
         self.transport.borrow_mut()
     }
 
+    /// Convert into the inner transport
     pub fn into_inner(self) -> T {
         self.transport
     }
 
+    /// Size of the flash in bytes
     pub fn size(&self) -> u64 {
         self.size
     }
@@ -360,9 +392,9 @@ enum BufferState {
     Dirty,
 }
 
-impl<T> Write for LibUsbTransportIO<T>
+impl<T> Write for TransportIO<T>
 where
-    T: BorrowMut<LibUsbTransport>,
+    T: BorrowMut<Transport>,
 {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let r = match self.pre_io(buf.len() as u64)? {
@@ -381,9 +413,9 @@ where
     }
 }
 
-impl<T> Read for LibUsbTransportIO<T>
+impl<T> Read for TransportIO<T>
 where
-    T: BorrowMut<LibUsbTransport>,
+    T: BorrowMut<Transport>,
 {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let r = match self.pre_io(buf.len() as u64)? {
@@ -397,9 +429,9 @@ where
     }
 }
 
-impl<T> Seek for LibUsbTransportIO<T>
+impl<T> Seek for TransportIO<T>
 where
-    T: BorrowMut<LibUsbTransport>,
+    T: BorrowMut<Transport>,
 {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         self.offset = match pos {
