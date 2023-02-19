@@ -8,7 +8,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@1.64.0
-      - run: cargo test --all-features
+      - run: cargo test --all-targets --all-features
 
   fmt:
     name: cargo fmt
@@ -28,4 +28,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.64.0
         with:
             components: clippy
-      - run: cargo clippy -- -D warnings
+      - run: cargo clippy --all-targets -- -D warnings
