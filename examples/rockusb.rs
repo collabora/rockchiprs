@@ -2,7 +2,7 @@ use std::{
     ffi::OsStr,
     fs::File,
     io::{BufWriter, Read, Seek, SeekFrom, Write},
-    net::{TcpListener, TcpStream},
+    net::TcpListener,
     path::{Path, PathBuf},
     thread::sleep,
     time::Duration,
@@ -55,7 +55,7 @@ fn write_lba(mut transport: LibUsbTransport, offset: u32, length: u16, path: &Pa
     let mut file = File::open(path)?;
     file.read_exact(&mut data)?;
 
-    transport.write_lba(offset, &mut data)?;
+    transport.write_lba(offset, &data)?;
 
     Ok(())
 }
@@ -82,7 +82,7 @@ fn find_bmap(img: &Path) -> Option<PathBuf> {
 }
 
 fn write_bmap(transport: LibUsbTransport, path: &Path) -> Result<()> {
-    let bmap_path = find_bmap(path).ok_or(anyhow!("Failed to find bmap"))?;
+    let bmap_path = find_bmap(path).ok_or_else(|| anyhow!("Failed to find bmap"))?;
     println!("Using bmap file: {}", path.display());
 
     let mut bmap_file = File::open(bmap_path)?;
@@ -91,7 +91,7 @@ fn write_bmap(transport: LibUsbTransport, path: &Path) -> Result<()> {
     let bmap = Bmap::from_xml(&xml)?;
 
     // HACK to minimize small writes
-    let mut writer = BufWriter::with_capacity(16 * 1024 * 1024, transport);
+    let mut writer = BufWriter::with_capacity(16 * 1024 * 1024, transport.into_io()?);
 
     let mut file = File::open(path)?;
     match path.extension().and_then(OsStr::to_str) {
@@ -115,7 +115,7 @@ fn parse_entry(header: RkBootHeaderEntry, name: &str, file: &mut File) -> Result
             header.offset as u64 + (header.size * i) as u64,
         ))?;
         file.read_exact(&mut entry)?;
-        let entry = RkBootEntry::from_bytes(&mut entry);
+        let entry = RkBootEntry::from_bytes(&entry);
         println!("== {} Entry  {} ==", name, i);
         println!("{:?}", entry);
         println!("Name: {}", String::from_utf16(entry.name.as_slice())?);
@@ -165,7 +165,7 @@ fn download_entry(
         ))?;
         file.read_exact(&mut entry)?;
 
-        let entry = RkBootEntry::from_bytes(&mut entry);
+        let entry = RkBootEntry::from_bytes(&entry);
         println!("{} Name: {}", i, String::from_utf16(entry.name.as_slice())?);
 
         let mut data = Vec::new();
@@ -199,24 +199,7 @@ fn download_boot(mut transport: LibUsbTransport, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn handle_client(transport: &mut LibUsbTransport, mut stream: TcpStream) -> Result<()> {
-    let flash = transport.flash_info()?;
-
-    let e = nbd::Export {
-        size: flash.sectors() as u64 * 512,
-        readonly: false,
-        ..Default::default()
-    };
-
-    println!("Connection!");
-
-    nbd::server::handshake(&mut stream, &e)?;
-    println!("Shook hands!");
-    nbd::server::transmission(&mut stream, transport)?;
-    Ok(())
-}
-
-fn run_nbd(mut transport: LibUsbTransport) -> Result<()> {
+fn run_nbd(transport: LibUsbTransport) -> Result<()> {
     let listener = TcpListener::bind("127.0.0.1:10809").unwrap();
 
     println!(
@@ -224,18 +207,28 @@ fn run_nbd(mut transport: LibUsbTransport) -> Result<()> {
         listener.local_addr()?
     );
 
-    let mut streams = listener.incoming().into_iter();
-    for stream in streams.next().transpose()? {
-        match handle_client(&mut transport, stream) {
-            Ok(_) => {
-                println!("nbd client disconnected");
-            }
-            Err(e) => {
-                eprintln!("nbd error: {}", e);
-            }
-        }
-    }
+    let mut stream = listener
+        .incoming()
+        .next()
+        .transpose()?
+        .ok_or_else(|| anyhow!("Connection failure"))?;
+    // Stop listening for new connections
+    drop(listener);
 
+    let io = transport.into_io()?;
+
+    let export = nbd::Export {
+        size: io.size(),
+        readonly: false,
+        ..Default::default()
+    };
+
+    println!("Connection!");
+
+    nbd::server::handshake(&mut stream, &export)?;
+    println!("Shook hands!");
+    nbd::server::transmission(&mut stream, io)?;
+    println!("nbd client disconnected");
     Ok(())
 }
 
@@ -350,7 +343,7 @@ fn main() -> Result<()> {
             _ => {
                 drop(devices);
                 let _ = list_available_devices();
-                println!("");
+                println!();
                 Err(anyhow!(
                     "Please select a specific device using the -d option"
                 ))

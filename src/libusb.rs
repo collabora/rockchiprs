@@ -1,10 +1,11 @@
 use std::{
+    borrow::BorrowMut,
     io::{Read, Seek, SeekFrom, Write},
     time::Duration,
 };
 
 use crate::{
-    protocol::{ChipInfo, FlashId, FlashInfo},
+    protocol::{ChipInfo, FlashId, FlashInfo, SECTOR_SIZE},
     OperationSteps,
 };
 use rusb::{DeviceHandle, GlobalContext};
@@ -74,10 +75,6 @@ pub struct LibUsbTransport {
     handle: DeviceHandle<rusb::GlobalContext>,
     ep_in: u8,
     ep_out: u8,
-    offset: u32,
-    written: usize,
-    outstanding_write: usize,
-    write_buffer: [u8; 512],
 }
 
 impl LibUsbTransport {
@@ -97,10 +94,6 @@ impl LibUsbTransport {
             handle,
             ep_in,
             ep_out,
-            offset: 0,
-            written: 0,
-            outstanding_write: 0,
-            write_buffer: [0u8; 512],
         })
     }
 
@@ -147,6 +140,14 @@ impl LibUsbTransport {
             device,
             error: rusb::Error::NotFound,
         })
+    }
+
+    pub fn io(&mut self) -> Result<LibUsbTransportIO<&mut Self>> {
+        LibUsbTransportIO::new(self)
+    }
+
+    pub fn into_io(self) -> Result<LibUsbTransportIO<Self>> {
+        LibUsbTransportIO::new(self)
     }
 
     pub fn handle(&mut self) -> &mut DeviceHandle<GlobalContext> {
@@ -226,107 +227,201 @@ impl LibUsbTransport {
     }
 }
 
-impl Write for LibUsbTransport {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if self.outstanding_write > 0 {
-            let left = 512 - self.outstanding_write;
-            let copy = left.min(buf.len());
-            let end = self.outstanding_write + copy;
+pub struct LibUsbTransportIO<T> {
+    transport: T,
+    size: u64,
+    // Read/Write offset in bytes
+    offset: u64,
+    buffer: [u8; 512],
+    // Whether or not the buffer is dirty
+    state: BufferState,
+}
 
-            self.write_buffer[self.outstanding_write..end].copy_from_slice(&buf[0..copy]);
-            self.outstanding_write += copy;
-            assert!(self.outstanding_write <= 512);
+impl<T> LibUsbTransportIO<T>
+where
+    T: BorrowMut<LibUsbTransport>,
+{
+    const MAXIO_SIZE: u64 = 128 * crate::protocol::SECTOR_SIZE as u64;
+    pub fn new(mut transport: T) -> Result<Self> {
+        let info = transport.borrow_mut().flash_info()?;
+        Ok(Self {
+            transport,
+            size: info.size(),
+            offset: 0,
+            buffer: [0u8; 512],
+            state: BufferState::Invalid,
+        })
+    }
 
-            if self.outstanding_write == 512 {
-                let towrite = self.write_buffer;
-                self.write_lba(self.offset, &towrite).unwrap();
-                self.offset += 1;
-                self.outstanding_write = 0;
-            }
-            return Ok(copy);
-        }
+    pub fn inner(&mut self) -> &mut LibUsbTransport {
+        self.transport.borrow_mut()
+    }
 
-        let old = self.offset;
-        const CHUNK: usize = 128 * 512;
-        let written = if buf.len() > CHUNK {
-            self.write_lba(self.offset, &buf[0..CHUNK]).unwrap();
-            self.offset += (CHUNK / 512) as u32;
-            CHUNK
-        } else if buf.len() >= 512 {
-            let towrite = buf.len() / 512;
-            let towrite = towrite * 512;
-            self.write_lba(self.offset, &buf[0..towrite]).unwrap();
-            self.offset += (towrite / 512) as u32;
-            towrite
+    pub fn into_inner(self) -> T {
+        self.transport
+    }
+
+    pub fn size(&self) -> u64 {
+        self.size
+    }
+
+    fn current_sector(&self) -> u64 {
+        self.offset / SECTOR_SIZE
+    }
+
+    // Want to start an i/o operation with a given maximum length
+    fn pre_io(&mut self, len: u64) -> std::result::Result<IOOperation, std::io::Error> {
+        // Offset inside the current sector
+        let sector_offset = self.offset % SECTOR_SIZE;
+        // bytes left from current position to end of current sector
+        let sector_remaining = SECTOR_SIZE - sector_offset;
+
+        // If the I/O operation is starting at a sector edge and encompasses at least one sector
+        // then direct I/O can be done
+        if sector_offset == 0 && len >= SECTOR_SIZE {
+            let io_len = len / SECTOR_SIZE * SECTOR_SIZE;
+            Ok(IOOperation::Direct {
+                len: io_len.min(Self::MAXIO_SIZE) as usize,
+            })
         } else {
-            self.write_buffer[0..buf.len()].copy_from_slice(buf);
-            self.outstanding_write = buf.len();
-
-            buf.len()
-        };
-
-        // Report every 128 MB; mind in sectors
-        const REPORTING: usize = 128 * 1024 * 2;
-
-        // HACK show how far in the write we are
-        if old as usize / REPORTING != self.offset as usize / REPORTING {
-            println!(
-                "At {} MB (written {})",
-                self.offset / 2048,
-                self.written / (1024 * 1024)
-            );
+            if self.state == BufferState::Invalid {
+                let sector = self.current_sector() as u32;
+                self.transport
+                    .borrow_mut()
+                    .read_lba(sector, &mut self.buffer)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;
+                self.state = BufferState::Valid;
+            }
+            Ok(IOOperation::Buffered {
+                offset: sector_offset as usize,
+                len: len.min(sector_remaining) as usize,
+            })
         }
-        self.written += written;
-        Ok(written)
+    }
+
+    fn post_io(&mut self, len: u64) -> std::result::Result<usize, std::io::Error> {
+        // Offset inside the current sector
+        let sector_offset = self.offset % SECTOR_SIZE;
+        // bytes left from current position to end of current sector
+        let sector_remaining = SECTOR_SIZE - sector_offset;
+
+        // If going over the sector edge flush the current buffer and invalidate it
+        if len >= sector_remaining {
+            self.flush_buffer()?;
+            self.state = BufferState::Invalid;
+        }
+        self.offset += len;
+        Ok(len as usize)
+    }
+
+    fn flush_buffer(&mut self) -> std::io::Result<()> {
+        if self.state == BufferState::Dirty {
+            let sector = self.current_sector() as u32;
+            self.transport
+                .borrow_mut()
+                .write_lba(sector, &self.buffer)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;
+            self.state = BufferState::Valid;
+        }
+        Ok(())
+    }
+
+    fn do_read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let sector = self.current_sector() as u32;
+        self.transport
+            .borrow_mut()
+            .read_lba(sector, buf)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;
+        Ok(buf.len())
+    }
+
+    fn do_write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let sector = self.current_sector() as u32;
+        self.transport
+            .borrow_mut()
+            .write_lba(sector, buf)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;
+        Ok(buf.len())
+    }
+}
+
+enum IOOperation {
+    Direct { len: usize },
+    Buffered { offset: usize, len: usize },
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum BufferState {
+    // Buffer content doesn't match current offset
+    Invalid,
+    // Buffer content matches offset and device-side
+    Valid,
+    // Buffer content matches offset and has outstanding data
+    Dirty,
+}
+
+impl<T> Write for LibUsbTransportIO<T>
+where
+    T: BorrowMut<LibUsbTransport>,
+{
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let r = match self.pre_io(buf.len() as u64)? {
+            IOOperation::Direct { len } => self.do_write(&buf[..len])?,
+            IOOperation::Buffered { offset, len } => {
+                self.buffer[offset..offset + len].copy_from_slice(&buf[0..len]);
+                self.state = BufferState::Dirty;
+                len
+            }
+        };
+        self.post_io(r as u64)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        if self.outstanding_write > 0 {
-            eprintln!(
-                "Write flush for small write flush : {}",
-                self.outstanding_write
-            );
-            let mut read = [0u8; 512];
-            self.read_lba(self.offset, &mut read).unwrap();
-            read[0..self.outstanding_write].copy_from_slice(&self.write_buffer);
-            self.write_lba(self.offset, &read).unwrap();
-
-            let mut check = [0u8; 512];
-            self.read_lba(self.offset, &mut check).unwrap();
-            assert_eq!(check, read);
-
-            self.outstanding_write = 0;
-            self.offset += 1;
-        }
-
-        Ok(())
+        self.flush_buffer()
     }
 }
 
-impl Read for LibUsbTransport {
+impl<T> Read for LibUsbTransportIO<T>
+where
+    T: BorrowMut<LibUsbTransport>,
+{
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let toread = buf.len().min(128 * 512);
-        assert!(toread % 512 == 0);
-        self.read_lba(self.offset, &mut buf[0..toread]).unwrap();
-        self.offset += toread as u32 / 512;
-        Ok(toread)
+        let r = match self.pre_io(buf.len() as u64)? {
+            IOOperation::Direct { len } => self.do_read(&mut buf[..len])?,
+            IOOperation::Buffered { offset, len } => {
+                buf[0..len].copy_from_slice(&self.buffer[offset..offset + len]);
+                len
+            }
+        };
+        self.post_io(r as u64)
     }
 }
 
-impl Seek for LibUsbTransport {
+impl<T> Seek for LibUsbTransportIO<T>
+where
+    T: BorrowMut<LibUsbTransport>,
+{
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-        self.flush()?;
-        match pos {
-            SeekFrom::Start(offset) => {
-                assert!(offset % 512 == 0, "Not 512 multiple: {}", offset);
-                self.offset = (offset / 512) as u32;
+        self.offset = match pos {
+            SeekFrom::Start(offset) => self.size.min(offset),
+            SeekFrom::End(offset) => {
+                if offset > 0 {
+                    self.size
+                } else {
+                    let offset = offset.unsigned_abs();
+                    self.size.saturating_sub(offset)
+                }
             }
             SeekFrom::Current(offset) => {
-                assert!(offset % 512 == 0, "Not 512 multiple: {}", offset);
-                self.offset += (offset / 512) as u32;
+                if offset > 0 {
+                    let offset = offset as u64;
+                    self.offset.saturating_add(offset).min(self.size)
+                } else {
+                    let offset = offset.unsigned_abs();
+                    self.offset.saturating_sub(offset)
+                }
             }
-            SeekFrom::End(_) => todo!(),
-        }
-        Ok(self.offset as u64 * 512)
+        };
+        Ok(self.offset)
     }
 }

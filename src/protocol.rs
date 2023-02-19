@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use bytes::{Buf, BufMut};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
-const SECTOR_SIZE: u32 = 512;
+pub const SECTOR_SIZE: u64 = 512;
 
 #[repr(u8)]
 #[derive(Debug, Eq, PartialEq, Clone, Copy, IntoPrimitive, TryFromPrimitive)]
@@ -130,9 +130,14 @@ impl FlashInfo {
         FlashInfo(data)
     }
 
-    /// size in 512 byte sectors
+    /// flash size in 512 byte sectors
     pub fn sectors(&self) -> u32 {
         self.0.as_slice().get_u32_le()
+    }
+
+    /// flash size in bytes
+    pub fn size(&self) -> u64 {
+        u64::from(self.sectors()) * SECTOR_SIZE
     }
 
     /// Block size in 512 bytes sectors
@@ -215,7 +220,7 @@ impl CommandBlock {
     pub fn read_lba(start_sector: u32, sectors: u16) -> CommandBlock {
         CommandBlock {
             tag: fastrand::u32(..),
-            transfer_length: u32::from(sectors) * SECTOR_SIZE,
+            transfer_length: u32::from(sectors) * SECTOR_SIZE as u32,
             flags: Direction::In,
             lun: 0,
             cdb_length: 0xa,
@@ -228,7 +233,7 @@ impl CommandBlock {
     pub fn write_lba(start_sector: u32, sectors: u16) -> CommandBlock {
         CommandBlock {
             tag: fastrand::u32(..),
-            transfer_length: u32::from(sectors) * SECTOR_SIZE,
+            transfer_length: u32::from(sectors) * SECTOR_SIZE as u32,
             flags: Direction::Out,
             lun: 0,
             cdb_length: 0xa,
