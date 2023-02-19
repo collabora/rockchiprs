@@ -18,7 +18,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.64.0
         with:
             components: rustfmt
-      - run: cargo fmt --all --features
+      - run: cargo fmt --all --check
 
   clippy:
     name: cargo clippy
@@ -28,4 +28,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.64.0
         with:
             components: clippy
-      - run: cargo clippy -D warnings
+      - run: cargo clippy -- -D warnings
