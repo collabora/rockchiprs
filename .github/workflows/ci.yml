@@ -16,6 +16,8 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@1.64.0
+        with:
+            components: rustfmt
       - run: cargo fmt --all --features
 
   clippy:
@@ -24,4 +26,6 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@1.64.0
+        with:
+            components: clippy
       - run: cargo clippy -D warnings
