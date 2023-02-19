@@ -50,48 +50,21 @@ pub struct DevicesIter<'a> {
 impl Iterator for DevicesIter<'_> {
     type Item = std::result::Result<LibUsbTransport, DeviceUnavalable>;
 
-    // TODO ignore errors?
     fn next(&mut self) -> Option<Self::Item> {
-        for d in self.iter.by_ref() {
-            let desc = match d.device_descriptor() {
+        for device in self.iter.by_ref() {
+            let desc = match device.device_descriptor() {
                 Ok(desc) => desc,
                 _ => continue,
             };
             if desc.vendor_id() != 0x2207 {
                 continue;
             }
-            for c in 0..desc.num_configurations() {
-                let config = match d.config_descriptor(c) {
-                    Ok(config) => config,
-                    _ => continue,
-                };
-                for i in config.interfaces() {
-                    for i_desc in i.descriptors() {
-                        let output = i_desc.endpoint_descriptors().find(|e| {
-                            e.direction() == rusb::Direction::Out
-                                && e.transfer_type() == rusb::TransferType::Bulk
-                        });
-                        let input = i_desc.endpoint_descriptors().find(|e| {
-                            e.direction() == rusb::Direction::In
-                                && e.transfer_type() == rusb::TransferType::Bulk
-                        });
+            let handle = match device.open() {
+                Ok(handle) => handle,
+                Err(error) => return Some(Err(DeviceUnavalable { device, error })),
+            };
 
-                        if let (Some(input), Some(output)) = (input, output) {
-                            let handle = match d.open() {
-                                Ok(h) => h,
-                                _ => continue,
-                            };
-
-                            return Some(LibUsbTransport::new(
-                                handle,
-                                i_desc.setting_number(),
-                                input.address(),
-                                output.address(),
-                            ));
-                        }
-                    }
-                }
-            }
+            return Some(LibUsbTransport::from_usb_device(handle));
         }
         None
     }
@@ -128,6 +101,51 @@ impl LibUsbTransport {
             written: 0,
             outstanding_write: 0,
             write_buffer: [0u8; 512],
+        })
+    }
+
+    pub fn from_usb_device(
+        handle: rusb::DeviceHandle<GlobalContext>,
+    ) -> std::result::Result<Self, DeviceUnavalable> {
+        let device = handle.device();
+        let desc = device
+            .device_descriptor()
+            .map_err(|error| DeviceUnavalable {
+                device: device.clone(),
+                error,
+            })?;
+        for c in 0..desc.num_configurations() {
+            let config = device
+                .config_descriptor(c)
+                .map_err(|error| DeviceUnavalable {
+                    device: device.clone(),
+                    error,
+                })?;
+            for i in config.interfaces() {
+                for i_desc in i.descriptors() {
+                    let output = i_desc.endpoint_descriptors().find(|e| {
+                        e.direction() == rusb::Direction::Out
+                            && e.transfer_type() == rusb::TransferType::Bulk
+                    });
+                    let input = i_desc.endpoint_descriptors().find(|e| {
+                        e.direction() == rusb::Direction::In
+                            && e.transfer_type() == rusb::TransferType::Bulk
+                    });
+
+                    if let (Some(input), Some(output)) = (input, output) {
+                        return LibUsbTransport::new(
+                            handle,
+                            i_desc.setting_number(),
+                            input.address(),
+                            output.address(),
+                        );
+                    }
+                }
+            }
+        }
+        Err(DeviceUnavalable {
+            device,
+            error: rusb::Error::NotFound,
         })
     }
 
