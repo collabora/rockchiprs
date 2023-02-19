@@ -5,7 +5,6 @@ use protocol::{
 };
 use thiserror::Error;
 
-pub mod bootfile;
 #[cfg(feature = "libusb")]
 pub mod libusb;
 pub mod protocol;

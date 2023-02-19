@@ -12,7 +12,7 @@ use anyhow::{anyhow, Result};
 use bmap_parser::Bmap;
 use clap::Parser;
 use flate2::read::GzDecoder;
-use rockusb::bootfile::{
+use rockfile::boot::{
     RkBootEntry, RkBootEntryBytes, RkBootHeader, RkBootHeaderBytes, RkBootHeaderEntry,
 };
 use rockusb::libusb::{DeviceUnavalable, LibUsbTransport};

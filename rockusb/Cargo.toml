@@ -22,4 +22,5 @@ bmap-parser = "0.1.0"
 clap = { version = "4.1.4", features = ["derive"] }
 flate2 = "1.0.25"
 nbd = "0.2.3"
+rockfile = { path = "../rockfile" }
 rusb = "0.9.1"
