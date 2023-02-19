@@ -1,11 +1,13 @@
 use std::marker::PhantomData;
 
 use protocol::{
-    ChipInfo, CommandBlock, CommandStatus, CommandStatusParseError, Direction, FlashInfo,
+    ChipInfo, CommandBlock, CommandStatus, CommandStatusParseError, Direction, FlashId, FlashInfo,
 };
 use thiserror::Error;
 
 pub mod bootfile;
+#[cfg(feature = "libusb")]
+pub mod libusb;
 pub mod protocol;
 
 #[derive(Debug, Clone, Eq, PartialEq, Error)]
@@ -297,6 +299,22 @@ impl FromOperation for ChipInfo {
 
 pub fn chip_info() -> UsbOperation<'static, ChipInfo> {
     UsbOperation::new(CommandBlock::chip_info())
+}
+
+impl FromOperation for FlashId {
+    fn from_operation(io: &[u8], _status: &CommandStatus) -> Result<Self, RockUsbOperationError>
+    where
+        Self: Sized,
+    {
+        let data = io
+            .try_into()
+            .map_err(|_e| RockUsbOperationError::ReplyParseFailure)?;
+        Ok(FlashId::from_bytes(data))
+    }
+}
+
+pub fn flash_id() -> UsbOperation<'static, FlashId> {
+    UsbOperation::new(CommandBlock::flash_id())
 }
 
 impl FromOperation for FlashInfo {

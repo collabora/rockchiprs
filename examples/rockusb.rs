@@ -8,274 +8,16 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use bmap_parser::Bmap;
 use clap::Parser;
 use flate2::read::GzDecoder;
-use rockusb::{
-    bootfile::{RkBootEntry, RkBootEntryBytes, RkBootHeader, RkBootHeaderBytes, RkBootHeaderEntry},
-    protocol::{ChipInfo, FlashInfo},
-    OperationSteps,
+use rockusb::bootfile::{
+    RkBootEntry, RkBootEntryBytes, RkBootHeader, RkBootHeaderBytes, RkBootHeaderEntry,
 };
-use rusb::DeviceHandle;
+use rockusb::libusb::{DeviceUnavalable, LibUsbTransport};
 
-fn find_device() -> Result<(DeviceHandle<rusb::GlobalContext>, u8, u8, u8)> {
-    let devices = rusb::DeviceList::new()?;
-    for d in devices.iter() {
-        let desc = d.device_descriptor()?;
-        if desc.vendor_id() != 0x2207 {
-            continue;
-        }
-
-        println!("=> {}", desc.usb_version());
-        println!("=> {:#?}", desc);
-        println!("=> {:#?}", d);
-
-        for c in 0..desc.num_configurations() {
-            let config = d.config_descriptor(c)?;
-            for i in config.interfaces() {
-                for i_desc in i.descriptors() {
-                    let output = i_desc.endpoint_descriptors().find(|e| {
-                        e.direction() == rusb::Direction::Out
-                            && e.transfer_type() == rusb::TransferType::Bulk
-                    });
-                    let input = i_desc.endpoint_descriptors().find(|e| {
-                        e.direction() == rusb::Direction::In
-                            && e.transfer_type() == rusb::TransferType::Bulk
-                    });
-
-                    match (input, output) {
-                        (Some(input), Some(output)) => {
-                            println!("Found {:?} interface: {}", d, i_desc.setting_number());
-                            let handle = match d.open() {
-                                Ok(h) => h,
-                                _ => continue,
-                            };
-
-                            return Ok((
-                                handle,
-                                i_desc.setting_number(),
-                                input.address(),
-                                output.address(),
-                            ));
-                        }
-                        (input, output) => {
-                            println!(
-                                "Device {:?} missing endpoints - {:?} {:?}",
-                                d, input, output
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Err(anyhow!("No device found"))
-}
-
-struct LibUsbTransport {
-    handle: DeviceHandle<rusb::GlobalContext>,
-    ep_in: u8,
-    ep_out: u8,
-    offset: u32,
-    written: usize,
-    outstanding_write: usize,
-    write_buffer: [u8; 512],
-}
-
-impl LibUsbTransport {
-    fn new(
-        mut handle: DeviceHandle<rusb::GlobalContext>,
-        interface: u8,
-        ep_in: u8,
-        ep_out: u8,
-    ) -> Self {
-        handle.claim_interface(interface).unwrap();
-        Self {
-            handle,
-            ep_in,
-            ep_out,
-            offset: 0,
-            written: 0,
-            outstanding_write: 0,
-            write_buffer: [0u8; 512],
-        }
-    }
-
-    fn handle_operation<O, T>(&mut self, mut operation: O) -> Result<T>
-    where
-        O: OperationSteps<T>,
-    {
-        loop {
-            let step = operation.step();
-            match step {
-                rockusb::UsbStep::WriteBulk { data } => {
-                    let _written = self
-                        .handle
-                        .write_bulk(self.ep_out, &data, Duration::from_secs(5))
-                        .context("Failed to read")?;
-                }
-                rockusb::UsbStep::ReadBulk { mut data } => {
-                    let _read = self
-                        .handle
-                        .read_bulk(self.ep_in, &mut data, Duration::from_secs(5))
-                        .context("Failed to read")?;
-                }
-                rockusb::UsbStep::Finished(r) => break r.map_err(|e| e.into()),
-                rockusb::UsbStep::WriteControl {
-                    request_type,
-                    request,
-                    value,
-                    index,
-                    data,
-                } => {
-                    self.handle.write_control(
-                        request_type,
-                        request,
-                        value,
-                        index,
-                        data,
-                        Duration::from_secs(5),
-                    )?;
-                }
-            }
-        }
-    }
-
-    fn flash_info(&mut self) -> Result<FlashInfo> {
-        Ok(self.handle_operation(rockusb::flash_info())?)
-    }
-
-    fn chip_info(&mut self) -> Result<ChipInfo> {
-        Ok(self.handle_operation(rockusb::chip_info())?)
-    }
-
-    pub fn read_lba(&mut self, start_sector: u32, read: &mut [u8]) -> Result<u32> {
-        Ok(self
-            .handle_operation(rockusb::read_lba(start_sector, read))?
-            .into())
-    }
-
-    pub fn write_lba(&mut self, start_sector: u32, write: &[u8]) -> Result<u32> {
-        Ok(self
-            .handle_operation(rockusb::write_lba(start_sector, write))?
-            .into())
-    }
-
-    pub fn write_maskrom_area(&mut self, area: u16, data: &[u8]) -> Result<()> {
-        Ok(self.handle_operation(rockusb::write_area(area, data))?)
-    }
-}
-
-impl Write for LibUsbTransport {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if self.outstanding_write > 0 {
-            let left = 512 - self.outstanding_write;
-            let copy = left.min(buf.len());
-            let end = self.outstanding_write + copy;
-
-            self.write_buffer[self.outstanding_write..end].copy_from_slice(&buf[0..copy]);
-            self.outstanding_write += copy;
-            assert!(self.outstanding_write <= 512);
-
-            if self.outstanding_write == 512 {
-                let towrite = self.write_buffer;
-                self.write_lba(self.offset, &towrite).unwrap();
-                self.offset += 1;
-                self.outstanding_write = 0;
-            }
-            return Ok(copy);
-        }
-
-        let old = self.offset;
-        const CHUNK: usize = 128 * 512;
-        let written = if buf.len() > CHUNK {
-            self.write_lba(self.offset, &buf[0..CHUNK]).unwrap();
-            self.offset += (CHUNK / 512) as u32;
-            CHUNK
-        } else if buf.len() >= 512 {
-            let towrite = buf.len() / 512;
-            let towrite = towrite * 512;
-            self.write_lba(self.offset, &buf[0..towrite]).unwrap();
-            self.offset += (towrite / 512) as u32;
-            towrite
-        } else {
-            self.write_buffer[0..buf.len()].copy_from_slice(&buf);
-            self.outstanding_write = buf.len();
-
-            buf.len()
-        };
-
-        // Report every 128 MB; mind in sectors
-        const REPORTING: usize = 128 * 1024 * 2;
-
-        // HACK show how far in the write we are
-        if old as usize / REPORTING != self.offset as usize / REPORTING {
-            println!(
-                "At {} MB (written {})",
-                self.offset / 2048,
-                self.written / (1024 * 1024)
-            );
-        }
-        self.written += written;
-        Ok(written)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        if self.outstanding_write > 0 {
-            eprintln!(
-                "Write flush for small write flush : {}",
-                self.outstanding_write
-            );
-            let mut read = [0u8; 512];
-            self.read_lba(self.offset, &mut read).unwrap();
-            read[0..self.outstanding_write].copy_from_slice(&self.write_buffer);
-            self.write_lba(self.offset, &read).unwrap();
-
-            let mut check = [0u8; 512];
-            self.read_lba(self.offset, &mut check).unwrap();
-            assert_eq!(check, read);
-
-            self.outstanding_write = 0;
-            self.offset += 1;
-        }
-
-        Ok(())
-    }
-}
-
-impl Read for LibUsbTransport {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let toread = buf.len().min(128 * 512);
-        assert!(toread % 512 == 0);
-        self.read_lba(self.offset, &mut buf[0..toread]).unwrap();
-        self.offset += toread as u32 / 512;
-        Ok(toread)
-    }
-}
-
-impl Seek for LibUsbTransport {
-    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-        self.flush()?;
-        match pos {
-            SeekFrom::Start(offset) => {
-                assert!(offset % 512 == 0, "Not 512 multiple: {}", offset);
-                self.offset = (offset / 512) as u32;
-            }
-            SeekFrom::Current(offset) => {
-                assert!(offset % 512 == 0, "Not 512 multiple: {}", offset);
-                self.offset += (offset / 512) as u32;
-            }
-            SeekFrom::End(_) => todo!(),
-        }
-        Ok(self.offset as u64 * 512)
-    }
-}
-
-fn read_flash_info() -> Result<()> {
-    let (mut handle, interface, input, output) = find_device()?;
-    let mut transport = LibUsbTransport::new(handle, interface, input, output);
+fn read_flash_info(mut transport: LibUsbTransport) -> Result<()> {
     let info = transport.flash_info()?;
     println!("Raw Flash Info: {:0x?}", info);
     println!(
@@ -287,21 +29,14 @@ fn read_flash_info() -> Result<()> {
     Ok(())
 }
 
-fn read_chip_info() -> Result<()> {
-    let (mut handle, interface, input, output) = find_device()?;
-    let mut transport = LibUsbTransport::new(handle, interface, input, output);
+fn read_chip_info(mut transport: LibUsbTransport) -> Result<()> {
     println!("Chip Info: {:0x?}", transport.chip_info()?);
-
     Ok(())
 }
 
-fn read_lba(offset: u32, length: u16, path: &Path) -> Result<()> {
-    let (mut handle, interface, input, output) = find_device()?;
-
+fn read_lba(mut transport: LibUsbTransport, offset: u32, length: u16, path: &Path) -> Result<()> {
     let mut data = Vec::new();
     data.resize(length as usize * 512, 0);
-
-    let mut transport = LibUsbTransport::new(handle, interface, input, output);
     transport.read_lba(offset, &mut data)?;
 
     let mut file = std::fs::OpenOptions::new()
@@ -313,16 +48,13 @@ fn read_lba(offset: u32, length: u16, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn write_lba(offset: u32, length: u16, path: &Path) -> Result<()> {
-    let (mut handle, interface, input, output) = find_device()?;
-
+fn write_lba(mut transport: LibUsbTransport, offset: u32, length: u16, path: &Path) -> Result<()> {
     let mut data = Vec::new();
     data.resize(length as usize * 512, 0);
 
     let mut file = File::open(path)?;
     file.read_exact(&mut data)?;
 
-    let mut transport = LibUsbTransport::new(handle, interface, input, output);
     transport.write_lba(offset, &mut data)?;
 
     Ok(())
@@ -349,9 +81,7 @@ fn find_bmap(img: &Path) -> Option<PathBuf> {
     }
 }
 
-fn write_bmap(path: &Path) -> Result<()> {
-    let (mut handle, interface, input, output) = find_device()?;
-
+fn write_bmap(transport: LibUsbTransport, path: &Path) -> Result<()> {
     let bmap_path = find_bmap(path).ok_or(anyhow!("Failed to find bmap"))?;
     println!("Using bmap file: {}", path.display());
 
@@ -360,7 +90,6 @@ fn write_bmap(path: &Path) -> Result<()> {
     bmap_file.read_to_string(&mut xml)?;
     let bmap = Bmap::from_xml(&xml)?;
 
-    let transport = LibUsbTransport::new(handle, interface, input, output);
     // HACK to minimize small writes
     let mut writer = BufWriter::with_capacity(16 * 1024 * 1024, transport);
 
@@ -456,16 +185,13 @@ fn download_entry(
     Ok(())
 }
 
-fn download_boot(path: &Path) -> Result<()> {
+fn download_boot(mut transport: LibUsbTransport, path: &Path) -> Result<()> {
     let mut file = File::open(path)?;
     let mut header: RkBootHeaderBytes = [0; 102];
     file.read_exact(&mut header)?;
 
     let header =
         RkBootHeader::from_bytes(&header).ok_or_else(|| anyhow!("Failed to parse header"))?;
-
-    let (mut handle, interface, input, output) = find_device()?;
-    let mut transport = LibUsbTransport::new(handle, interface, input, output);
 
     download_entry(header.entry_471, 0x471, &mut file, &mut transport)?;
     download_entry(header.entry_472, 0x472, &mut file, &mut transport)?;
@@ -490,11 +216,7 @@ fn handle_client(transport: &mut LibUsbTransport, mut stream: TcpStream) -> Resu
     Ok(())
 }
 
-fn run_nbd() -> Result<()> {
-    let (mut handle, interface, input, output) = find_device()?;
-
-    let mut transport = LibUsbTransport::new(handle, interface, input, output);
-
+fn run_nbd(mut transport: LibUsbTransport) -> Result<()> {
     let listener = TcpListener::bind("127.0.0.1:10809").unwrap();
 
     println!(
@@ -519,6 +241,7 @@ fn run_nbd() -> Result<()> {
 
 #[derive(Debug, clap::Subcommand)]
 enum Command {
+    List,
     ParseBoot {
         path: PathBuf,
     },
@@ -539,35 +262,124 @@ enum Command {
         path: PathBuf,
     },
     ChipInfo,
+    FlashId,
     FlashInfo,
     // Run/expose device as a network block device
     Nbd,
 }
 
+#[derive(Debug, Clone)]
+struct DeviceArg {
+    bus_number: u8,
+    address: u8,
+}
+
+fn parse_device(device: &str) -> Result<DeviceArg> {
+    let mut parts = device.split(':');
+    let bus_number = parts
+        .next()
+        .ok_or_else(|| anyhow!("No bus number: use <bus>:<address>"))?
+        .parse()
+        .map_err(|_| anyhow!("Bus should be a number"))?;
+    let address = parts
+        .next()
+        .ok_or_else(|| anyhow!("No address: use <bus>:<address>"))?
+        .parse()
+        .map_err(|_| anyhow!("Address should be a numbrer"))?;
+    if parts.next().is_some() {
+        return Err(anyhow!("Too many parts"));
+    }
+    Ok(DeviceArg {
+        bus_number,
+        address,
+    })
+}
+
 #[derive(clap::Parser)]
 struct Opts {
+    #[arg(short, long, value_parser = parse_device)]
+    /// Device type specified as <bus>:<address>
+    device: Option<DeviceArg>,
     #[command(subcommand)]
     command: Command,
 }
 
+fn list_available_devices() -> Result<()> {
+    let devices = rockusb::libusb::Devices::new()?;
+    println!("Available rockchip devices");
+    for d in devices.iter() {
+        match d {
+            Ok(mut d) => println!("* {:?}", d.handle().device()),
+            Err(DeviceUnavalable { device, error }) => {
+                println!("* {:?} - Unavailable: {}", device, error)
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let opt = Opts::parse();
+
+    // Commands that don't talk a device
     match opt.command {
-        Command::ParseBoot { path } => parse_boot(&path),
-        Command::DownloadBoot { path } => download_boot(&path),
+        Command::ParseBoot { path } => return parse_boot(&path),
+        Command::List => return list_available_devices(),
+        _ => (),
+    }
+
+    let devices = rockusb::libusb::Devices::new()?;
+    let mut transport = if let Some(dev) = opt.device {
+        devices
+            .iter()
+            .find(|d| match d {
+                Ok(device) => {
+                    device.bus_number() == dev.bus_number && device.address() == dev.address
+                }
+                Err(DeviceUnavalable { device, .. }) => {
+                    device.bus_number() == dev.bus_number && device.address() == dev.address
+                }
+            })
+            .ok_or_else(|| anyhow!("Specified device not found"))?
+    } else {
+        let mut devices: Vec<_> = devices.iter().collect();
+        match devices.len() {
+            0 => Err(anyhow!("No devices found")),
+            1 => Ok(devices.pop().unwrap()),
+            _ => {
+                drop(devices);
+                let _ = list_available_devices();
+                println!("");
+                Err(anyhow!(
+                    "Please select a specific device using the -d option"
+                ))
+            }
+        }?
+    }?;
+
+    match opt.command {
+        Command::ParseBoot { .. } | Command::List => unreachable!(),
+        Command::DownloadBoot { path } => download_boot(transport, &path),
         Command::Read {
             offset,
             length,
             path,
-        } => read_lba(offset, length, &path),
+        } => read_lba(transport, offset, length, &path),
         Command::Write {
             offset,
             length,
             path,
-        } => write_lba(offset, length, &path),
-        Command::WriteBmap { path } => write_bmap(&path),
-        Command::ChipInfo => read_chip_info(),
-        Command::FlashInfo => read_flash_info(),
-        Command::Nbd => run_nbd(),
+        } => write_lba(transport, offset, length, &path),
+        Command::WriteBmap { path } => write_bmap(transport, &path),
+        Command::ChipInfo => read_chip_info(transport),
+        Command::FlashId => {
+            let id = transport.flash_id()?;
+            println!("Flash id: {}", id.to_str());
+            println!("raw: {:?}", id);
+            Ok(())
+        }
+        Command::FlashInfo => read_flash_info(transport),
+        Command::Nbd => run_nbd(transport),
     }
 }

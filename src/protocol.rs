@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use bytes::{Buf, BufMut};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
@@ -110,6 +112,18 @@ impl ChipInfo {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct FlashId([u8; 5]);
+impl FlashId {
+    pub fn from_bytes(data: [u8; 5]) -> Self {
+        FlashId(data)
+    }
+
+    pub fn to_str(&self) -> Cow<'_, str> {
+        String::from_utf8_lossy(&self.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct FlashInfo([u8; 11]);
 impl FlashInfo {
     pub fn from_bytes(data: [u8; 11]) -> Self {
@@ -159,6 +173,19 @@ pub struct CommandBlock {
 }
 
 impl CommandBlock {
+    pub fn flash_id() -> CommandBlock {
+        CommandBlock {
+            tag: fastrand::u32(..),
+            transfer_length: 5,
+            flags: Direction::In,
+            lun: 0,
+            cdb_length: 0x6,
+            cd_code: CommandCode::ReadFlashId,
+            cd_address: 0,
+            cd_length: 0x0,
+        }
+    }
+
     pub fn flash_info() -> CommandBlock {
         CommandBlock {
             tag: fastrand::u32(..),
