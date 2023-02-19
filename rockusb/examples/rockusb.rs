@@ -108,49 +108,6 @@ fn write_bmap(transport: LibUsbTransport, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn parse_entry(header: RkBootHeaderEntry, name: &str, file: &mut File) -> Result<()> {
-    for i in 0..header.count {
-        let mut entry: RkBootEntryBytes = [0; 57];
-        file.seek(SeekFrom::Start(
-            header.offset as u64 + (header.size * i) as u64,
-        ))?;
-        file.read_exact(&mut entry)?;
-        let entry = RkBootEntry::from_bytes(&entry);
-        println!("== {} Entry  {} ==", name, i);
-        println!("{:?}", entry);
-        println!("Name: {}", String::from_utf16(entry.name.as_slice())?);
-
-        let mut data = Vec::new();
-        data.resize(entry.data_size as usize, 0);
-        file.seek(SeekFrom::Start(entry.data_offset as u64))?;
-        file.read_exact(&mut data)?;
-
-        let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740);
-        println!("CRC: {:x}", crc.checksum(&data));
-    }
-
-    Ok(())
-}
-
-fn parse_boot(path: &Path) -> Result<()> {
-    let mut file = File::open(path)?;
-    let mut header: RkBootHeaderBytes = [0; 102];
-    file.read_exact(&mut header)?;
-    let header =
-        RkBootHeader::from_bytes(&header).ok_or_else(|| anyhow!("Failed to parse header"))?;
-
-    println!("Header: {:?}", header);
-    println!(
-        "chip: {:x} - {}",
-        header.supported_chip,
-        String::from_utf8_lossy(&header.supported_chip.to_le_bytes())
-    );
-    parse_entry(header.entry_471, "0x471", &mut file)?;
-    parse_entry(header.entry_472, "0x472", &mut file)?;
-    parse_entry(header.entry_loader, "loader", &mut file)?;
-    Ok(())
-}
-
 fn download_entry(
     header: RkBootHeaderEntry,
     code: u16,
@@ -235,9 +192,6 @@ fn run_nbd(transport: LibUsbTransport) -> Result<()> {
 #[derive(Debug, clap::Subcommand)]
 enum Command {
     List,
-    ParseBoot {
-        path: PathBuf,
-    },
     DownloadBoot {
         path: PathBuf,
     },
@@ -316,10 +270,8 @@ fn main() -> Result<()> {
     let opt = Opts::parse();
 
     // Commands that don't talk a device
-    match opt.command {
-        Command::ParseBoot { path } => return parse_boot(&path),
-        Command::List => return list_available_devices(),
-        _ => (),
+    if matches!(opt.command, Command::List) {
+        return list_available_devices();
     }
 
     let devices = rockusb::libusb::Devices::new()?;
@@ -352,7 +304,7 @@ fn main() -> Result<()> {
     }?;
 
     match opt.command {
-        Command::ParseBoot { .. } | Command::List => unreachable!(),
+        Command::List => unreachable!(),
         Command::DownloadBoot { path } => download_boot(transport, &path),
         Command::Read {
             offset,
