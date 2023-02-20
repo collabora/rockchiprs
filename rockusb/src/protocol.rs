@@ -43,6 +43,21 @@ enum CommandCode {
     DeviceReset = 0xFF,
 }
 
+#[repr(u8)]
+#[derive(Debug, Eq, PartialEq, Clone, Copy, IntoPrimitive, TryFromPrimitive)]
+pub enum ResetOpcode {
+    /// Reset
+    Reset = 0,
+    /// Reset to USB mass-storage device class
+    MSC,
+    /// Powers the SOC off
+    PowerOff,
+    /// Reset to maskrom mode
+    Maskrom,
+    /// Disconnect from USB
+    Disconnect,
+}
+
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum CommandStatusParseError {
     #[error("Invalid signature: {0:x?}")]
@@ -246,6 +261,20 @@ impl CommandBlock {
             cd_opcode: 0,
             cd_address: start_sector,
             cd_length: sectors,
+        }
+    }
+
+    pub fn reset_device(opcode: ResetOpcode) -> CommandBlock {
+        CommandBlock {
+            tag: fastrand::u32(..),
+            transfer_length: 0,
+            flags: Direction::Out,
+            lun: 0,
+            cdb_length: 0x6,
+            cd_code: CommandCode::DeviceReset,
+            cd_opcode: opcode.into(),
+            cd_address: 0,
+            cd_length: 0x0,
         }
     }
 

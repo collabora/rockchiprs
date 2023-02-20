@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use crate::protocol::{
     self, ChipInfo, CommandBlock, CommandStatus, CommandStatusParseError, Direction, FlashId,
-    FlashInfo,
+    FlashInfo, ResetOpcode,
 };
 use thiserror::Error;
 
@@ -341,6 +341,20 @@ impl FromOperation for FlashInfo {
 /// Create operation to retrieve SoC flash information
 pub fn flash_info() -> UsbOperation<'static, FlashInfo> {
     UsbOperation::new(CommandBlock::flash_info())
+}
+
+impl FromOperation for () {
+    fn from_operation(_io: &[u8], _status: &CommandStatus) -> Result<Self, UsbOperationError>
+    where
+        Self: Sized,
+    {
+        Ok(())
+    }
+}
+
+/// Create operation to reset the SoC
+pub fn reset_device(opcode: ResetOpcode) -> UsbOperation<'static, ()> {
+    UsbOperation::new(CommandBlock::reset_device(opcode))
 }
 
 /// Bytes transferred

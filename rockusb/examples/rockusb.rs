@@ -10,12 +10,13 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use bmap_parser::Bmap;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use flate2::read::GzDecoder;
 use rockfile::boot::{
     RkBootEntry, RkBootEntryBytes, RkBootHeader, RkBootHeaderBytes, RkBootHeaderEntry,
 };
 use rockusb::libusb::{DeviceUnavalable, Transport};
+use rockusb::protocol::ResetOpcode;
 
 fn read_flash_info(mut transport: Transport) -> Result<()> {
     let info = transport.flash_info()?;
@@ -26,6 +27,11 @@ fn read_flash_info(mut transport: Transport) -> Result<()> {
         info.sectors()
     );
 
+    Ok(())
+}
+
+fn reset_device(mut transport: Transport, opcode: ResetOpcode) -> Result<()> {
+    transport.reset_device(opcode)?;
     Ok(())
 }
 
@@ -189,7 +195,7 @@ fn run_nbd(transport: Transport) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, clap::Subcommand)]
+#[derive(Debug, clap::Parser)]
 enum Command {
     List,
     DownloadBoot {
@@ -211,8 +217,38 @@ enum Command {
     ChipInfo,
     FlashId,
     FlashInfo,
+    ResetDevice {
+        #[clap(value_enum, default_value_t=ArgResetOpcode::Reset)]
+        opcode: ArgResetOpcode,
+    },
     // Run/expose device as a network block device
     Nbd,
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum ArgResetOpcode {
+    /// Reset
+    Reset,
+    /// Reset to USB mass-storage device class
+    MSC,
+    /// Powers the SOC off
+    PowerOff,
+    /// Reset to maskrom mode
+    Maskrom,
+    /// Disconnect from USB
+    Disconnect,
+}
+
+impl From<ArgResetOpcode> for ResetOpcode {
+    fn from(arg: ArgResetOpcode) -> ResetOpcode {
+        match arg {
+            ArgResetOpcode::Reset => ResetOpcode::Reset,
+            ArgResetOpcode::MSC => ResetOpcode::MSC,
+            ArgResetOpcode::PowerOff => ResetOpcode::PowerOff,
+            ArgResetOpcode::Maskrom => ResetOpcode::Maskrom,
+            ArgResetOpcode::Disconnect => ResetOpcode::Disconnect,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -325,6 +361,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::FlashInfo => read_flash_info(transport),
+        Command::ResetDevice { opcode } => reset_device(transport, opcode.into()),
         Command::Nbd => run_nbd(transport),
     }
 }
