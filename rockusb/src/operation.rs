@@ -244,7 +244,13 @@ where
         match next {
             Operation::CommandBlock => {
                 let len = self.command.to_bytes(&mut self.command_bytes);
-                self.next = Operation::IO;
+                // If there is no transfer to be made (e.g. a command) just skip
+                // sending data.
+                if self.command.transfer_length() == 0 {
+                    self.next = Operation::CommandStatus;
+                } else {
+                    self.next = Operation::IO;
+                }
                 UsbStep::WriteBulk {
                     data: &self.command_bytes[..len],
                 }
