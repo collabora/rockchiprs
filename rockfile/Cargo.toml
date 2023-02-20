@@ -18,7 +18,3 @@ bytes = "1.4.0"
 anyhow = "1.0.69"
 clap = { version = "4.1.6", features = ["derive"] }
 crc = "3.0.1"
-
-[package.metadata.docs.rs]
-all-features = true
-rustdoc-args = ["--cfg", "docsrs"]

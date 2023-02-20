@@ -31,10 +31,6 @@ nbd = "0.2.3"
 rockfile = { path = "../rockfile" }
 rusb = "0.9.1"
 
-[package.metadata.docs.rs]
-all-features = true
-rustdoc-args = ["--cfg", "docsrs"]
-
 [[example]]
 name="rockusb"
 required-features = ["libusb"]
