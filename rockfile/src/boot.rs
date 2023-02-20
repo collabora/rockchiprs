@@ -116,7 +116,7 @@ pub struct RkBootHeader {
     pub version: u32,
     pub merge_version: u32,
     pub release: RkTime,
-    pub supported_chip: u32,
+    pub supported_chip: [u8; 4],
     pub entry_471: RkBootHeaderEntry,
     pub entry_472: RkBootHeaderEntry,
     pub entry_loader: RkBootHeaderEntry,
@@ -140,8 +140,7 @@ impl RkBootHeader {
         let release = RkTime::from_bytes(bytes[0..7].try_into().unwrap());
         bytes.advance(7);
 
-        let supported_chip = bytes.get_u32_le();
-
+        let supported_chip = bytes.get_u32().to_le_bytes();
         let entry_471 = RkBootHeaderEntry::from_bytes(bytes[0..6].try_into().unwrap());
         bytes.advance(6);
         let entry_472 = RkBootHeaderEntry::from_bytes(bytes[0..6].try_into().unwrap());
