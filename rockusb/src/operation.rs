@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use crate::protocol::{
     self, ChipInfo, CommandBlock, CommandStatus, CommandStatusParseError, Direction, FlashId,
-    FlashInfo,
+    FlashInfo, ResetOpcode,
 };
 use thiserror::Error;
 
@@ -244,7 +244,13 @@ where
         match next {
             Operation::CommandBlock => {
                 let len = self.command.to_bytes(&mut self.command_bytes);
-                self.next = Operation::IO;
+                // If there is no transfer to be made (e.g. a command) just skip
+                // sending data.
+                if self.command.transfer_length() == 0 {
+                    self.next = Operation::CommandStatus;
+                } else {
+                    self.next = Operation::IO;
+                }
                 UsbStep::WriteBulk {
                     data: &self.command_bytes[..len],
                 }
@@ -335,6 +341,20 @@ impl FromOperation for FlashInfo {
 /// Create operation to retrieve SoC flash information
 pub fn flash_info() -> UsbOperation<'static, FlashInfo> {
     UsbOperation::new(CommandBlock::flash_info())
+}
+
+impl FromOperation for () {
+    fn from_operation(_io: &[u8], _status: &CommandStatus) -> Result<Self, UsbOperationError>
+    where
+        Self: Sized,
+    {
+        Ok(())
+    }
+}
+
+/// Create operation to reset the SoC
+pub fn reset_device(opcode: ResetOpcode) -> UsbOperation<'static, ()> {
+    UsbOperation::new(CommandBlock::reset_device(opcode))
 }
 
 /// Bytes transferred

@@ -43,6 +43,21 @@ enum CommandCode {
     DeviceReset = 0xFF,
 }
 
+#[repr(u8)]
+#[derive(Debug, Eq, PartialEq, Clone, Copy, IntoPrimitive, TryFromPrimitive)]
+pub enum ResetOpcode {
+    /// Reset
+    Reset = 0,
+    /// Reset to USB mass-storage device class
+    MSC,
+    /// Powers the SOC off
+    PowerOff,
+    /// Reset to maskrom mode
+    Maskrom,
+    /// Disconnect from USB
+    Disconnect,
+}
+
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum CommandStatusParseError {
     #[error("Invalid signature: {0:x?}")]
@@ -173,6 +188,7 @@ pub struct CommandBlock {
     cdb_length: u8,
     // Command data block fields
     cd_code: CommandCode,
+    cd_opcode: u8,
     cd_address: u32,
     cd_length: u16,
 }
@@ -186,6 +202,7 @@ impl CommandBlock {
             lun: 0,
             cdb_length: 0x6,
             cd_code: CommandCode::ReadFlashId,
+            cd_opcode: 0,
             cd_address: 0,
             cd_length: 0x0,
         }
@@ -199,6 +216,7 @@ impl CommandBlock {
             lun: 0,
             cdb_length: 0x6,
             cd_code: CommandCode::ReadFlashInfo,
+            cd_opcode: 0,
             cd_address: 0,
             cd_length: 0x0,
         }
@@ -212,6 +230,7 @@ impl CommandBlock {
             lun: 0,
             cdb_length: 0x6,
             cd_code: CommandCode::ReadChipInfo,
+            cd_opcode: 0,
             cd_address: 0,
             cd_length: 0x0,
         }
@@ -225,6 +244,7 @@ impl CommandBlock {
             lun: 0,
             cdb_length: 0xa,
             cd_code: CommandCode::ReadLBA,
+            cd_opcode: 0,
             cd_address: start_sector,
             cd_length: sectors,
         }
@@ -238,8 +258,23 @@ impl CommandBlock {
             lun: 0,
             cdb_length: 0xa,
             cd_code: CommandCode::WriteLBA,
+            cd_opcode: 0,
             cd_address: start_sector,
             cd_length: sectors,
+        }
+    }
+
+    pub fn reset_device(opcode: ResetOpcode) -> CommandBlock {
+        CommandBlock {
+            tag: fastrand::u32(..),
+            transfer_length: 0,
+            flags: Direction::Out,
+            lun: 0,
+            cdb_length: 0x6,
+            cd_code: CommandCode::DeviceReset,
+            cd_opcode: opcode.into(),
+            cd_address: 0,
+            cd_length: 0x0,
         }
     }
 
@@ -263,7 +298,7 @@ impl CommandBlock {
         bytes.put_u8(self.lun);
         bytes.put_u8(self.cdb_length);
         bytes.put_u8(self.cd_code.into());
-        bytes.put_u8(0);
+        bytes.put_u8(self.cd_opcode);
         bytes.put_u32(self.cd_address);
         bytes.put_u8(0);
         bytes.put_u16(self.cd_length);
@@ -287,7 +322,7 @@ impl CommandBlock {
         let cdb_length = bytes.get_u8();
         let cd_code = CommandCode::try_from(bytes.get_u8())
             .map_err(|e| CommandBlockParseError::UnknownCommandCode(e.number))?;
-        bytes.advance(1);
+        let cd_opcode = bytes.get_u8();
         let cd_address = bytes.get_u32();
         bytes.advance(1);
         let cd_length = bytes.get_u16();
@@ -298,6 +333,7 @@ impl CommandBlock {
             lun,
             cdb_length,
             cd_code,
+            cd_opcode,
             cd_address,
             cd_length,
         })
@@ -329,6 +365,7 @@ mod test {
             lun: 0x66,
             cdb_length: 0x77,
             cd_code: CommandCode::EraseForce,
+            cd_opcode: 0x10,
             cd_address: 0x11223344,
             cd_length: 0x5566,
         };

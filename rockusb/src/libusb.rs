@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     operation::{OperationSteps, UsbStep},
-    protocol::{ChipInfo, FlashId, FlashInfo, SECTOR_SIZE},
+    protocol::{ChipInfo, FlashId, FlashInfo, ResetOpcode, SECTOR_SIZE},
 };
 use rusb::{DeviceHandle, GlobalContext};
 use thiserror::Error;
@@ -250,6 +250,11 @@ impl Transport {
     /// rockchip boot file
     pub fn write_maskrom_area(&mut self, area: u16, data: &[u8]) -> Result<()> {
         self.handle_operation(crate::operation::write_area(area, data))
+    }
+
+    /// Reset the device
+    pub fn reset_device(&mut self, opcode: ResetOpcode) -> Result<()> {
+        self.handle_operation(crate::operation::reset_device(opcode))
     }
 }
 
