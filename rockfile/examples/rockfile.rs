@@ -19,8 +19,8 @@ fn parse_entry(header: RkBootHeaderEntry, name: &str, file: &mut File) -> Result
         file.read_exact(&mut entry)?;
         let entry = RkBootEntry::from_bytes(&entry);
         println!("== {} Entry  {} ==", name, i);
-        println!("{:?}", entry);
         println!("Name: {}", String::from_utf16(entry.name.as_slice())?);
+        println!("Raw: {:?}", entry);
 
         let mut data = Vec::new();
         data.resize(entry.data_size as usize, 0);
@@ -28,7 +28,7 @@ fn parse_entry(header: RkBootHeaderEntry, name: &str, file: &mut File) -> Result
         file.read_exact(&mut data)?;
 
         let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740);
-        println!("CRC: {:x}", crc.checksum(&data));
+        println!("Data CRC: {:x}", crc.checksum(&data));
     }
 
     Ok(())
@@ -41,11 +41,11 @@ fn parse_boot(path: &Path) -> Result<()> {
     let header =
         RkBootHeader::from_bytes(&header).ok_or_else(|| anyhow!("Failed to parse header"))?;
 
-    println!("Header: {:?}", header);
+    println!("Raw Header: {:?}", header);
     println!(
-        "chip: {:x} - {}",
+        "chip: {:?} - {}",
         header.supported_chip,
-        String::from_utf8_lossy(&header.supported_chip.to_le_bytes())
+        String::from_utf8_lossy(&header.supported_chip)
     );
     parse_entry(header.entry_471, "0x471", &mut file)?;
     parse_entry(header.entry_472, "0x472", &mut file)?;
