@@ -1,4 +1,4 @@
-# Utility crates to interact with Rockchip devices
+# Utility crates to interact with Rockchip devices.
 
 Rockchip SoCs implement a custom USB protocol when starting in a special
 recovery mode (sometimes called maskrom). This repository contains helper
