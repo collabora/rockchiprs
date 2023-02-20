@@ -1,5 +1,10 @@
 name: test suite
-on: [push, pull_request, merge_group]
+on:
+  push:
+    branches-ignore:
+        - "gh-readonly-queue/**"
+  pull_request:
+  merge_group:
 
 jobs:
   test:
