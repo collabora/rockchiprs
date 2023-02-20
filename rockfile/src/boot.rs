@@ -14,7 +14,7 @@ pub struct RkTime {
 impl RkTime {
     pub fn from_bytes(bytes: &RkTimeBytes) -> RkTime {
         let mut bytes = &bytes[..];
-        let year = bytes.get_u16_le();
+        let ear = bytes.get_u16_le();
         let month = bytes.get_u8();
         let day = bytes.get_u8();
         let hour = bytes.get_u8();
