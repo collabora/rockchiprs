@@ -1,6 +1,6 @@
 [package]
 name = "rockusb"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Sjoerd Simons <sjoerd@collabora.com>"]
 license = "MIT OR Apache-2.0"
@@ -28,7 +28,7 @@ bmap-parser = "0.1.0"
 clap = { version = "4.1.4", features = ["derive"] }
 flate2 = "1.0.25"
 nbd = "0.2.3"
-rockfile = { path = "../rockfile" }
+rockfile = { path = "../rockfile", version = "0.1.0" }
 rusb = "0.9.1"
 
 [[example]]
