@@ -66,6 +66,15 @@ fn write_lba(mut transport: Transport, offset: u32, length: u16, path: &Path) ->
     Ok(())
 }
 
+fn write_file(mut transport: Transport, offset: u32, path: &Path) -> Result<()> {
+    let mut file = File::open(path)?;
+    let mut io = transport.io()?;
+
+    io.seek(SeekFrom::Start(offset as u64 * 512))?;
+    std::io::copy(&mut file, &mut io)?;
+    Ok(())
+}
+
 fn find_bmap(img: &Path) -> Option<PathBuf> {
     fn append(path: PathBuf) -> PathBuf {
         let mut p = path.into_os_string();
@@ -211,6 +220,10 @@ enum Command {
         length: u16,
         path: PathBuf,
     },
+    WriteFile {
+        offset: u32,
+        path: PathBuf,
+    },
     WriteBmap {
         path: PathBuf,
     },
@@ -352,6 +365,7 @@ fn main() -> Result<()> {
             length,
             path,
         } => write_lba(transport, offset, length, &path),
+        Command::WriteFile { offset, path } => write_file(transport, offset, &path),
         Command::WriteBmap { path } => write_bmap(transport, &path),
         Command::ChipInfo => read_chip_info(transport),
         Command::FlashId => {
