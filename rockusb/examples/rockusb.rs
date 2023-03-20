@@ -11,6 +11,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use bmap_parser::Bmap;
 use clap::{Parser, ValueEnum};
+use clap_num::maybe_hex;
 use flate2::read::GzDecoder;
 use rockfile::boot::{
     RkBootEntry, RkBootEntryBytes, RkBootHeader, RkBootHeaderBytes, RkBootHeaderEntry,
@@ -211,16 +212,21 @@ enum Command {
         path: PathBuf,
     },
     Read {
+        #[clap(value_parser=maybe_hex::<u32>)]
         offset: u32,
+        #[clap(value_parser=maybe_hex::<u16>)]
         length: u16,
         path: PathBuf,
     },
     Write {
+        #[clap(value_parser=maybe_hex::<u32>)]
         offset: u32,
+        #[clap(value_parser=maybe_hex::<u16>)]
         length: u16,
         path: PathBuf,
     },
     WriteFile {
+        #[clap(value_parser=maybe_hex::<u32>)]
         offset: u32,
         path: PathBuf,
     },
