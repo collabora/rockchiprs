@@ -16,7 +16,7 @@ use flate2::read::GzDecoder;
 use rockfile::boot::{
     RkBootEntry, RkBootEntryBytes, RkBootHeader, RkBootHeaderBytes, RkBootHeaderEntry,
 };
-use rockusb::libusb::{DeviceUnavalable, Transport};
+use rockusb::libusb::{BootMode, DeviceUnavalable, Transport};
 use rockusb::protocol::ResetOpcode;
 
 fn read_flash_info(mut transport: Transport) -> Result<()> {
@@ -311,7 +311,17 @@ fn list_available_devices() -> Result<()> {
     println!("Available rockchip devices");
     for d in devices.iter() {
         match d {
-            Ok(mut d) => println!("* {:?}", d.handle().device()),
+            Ok(mut d) => println!(
+                "* {:?} ({:?})",
+                d.handle().device(),
+                BootMode::from(
+                    d.handle()
+                        .device()
+                        .device_descriptor()?
+                        .device_version()
+                        .sub_minor()
+                )
+            ),
             Err(DeviceUnavalable { device, error }) => {
                 println!("* {:?} - Unavailable: {}", device, error)
             }
