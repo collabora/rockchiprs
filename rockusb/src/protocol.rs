@@ -177,7 +177,12 @@ pub enum CommandBlockParseError {
     InvalidLength(usize),
 }
 
+/// Total size of a CBW command
 pub const COMMAND_BLOCK_BYTES: usize = 31;
+
+/// This structure represents a CBW command block according the USB Mass
+/// Storage class specification. It carries a SCSI command inside the 'CBWCB'
+/// bytes that is referred to in the code as 'command data block'.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandBlock {
     tag: u32,
@@ -293,7 +298,7 @@ impl CommandBlock {
     pub fn to_bytes(&self, mut bytes: &mut [u8]) -> usize {
         bytes.put_slice(b"USBC");
         bytes.put_u32(self.tag);
-        bytes.put_u32(self.transfer_length);
+        bytes.put_u32_le(self.transfer_length);
         bytes.put_u8(self.flags.into());
         bytes.put_u8(self.lun);
         bytes.put_u8(self.cdb_length);
@@ -315,7 +320,7 @@ impl CommandBlock {
             return Err(CommandBlockParseError::InvalidSignature(magic));
         }
         let tag = bytes.get_u32();
-        let transfer_length = bytes.get_u32();
+        let transfer_length = bytes.get_u32_le();
         let flags = Direction::try_from(bytes.get_u8())
             .map_err(|e| CommandBlockParseError::UnknownFlags(e.number))?;
         let lun = bytes.get_u8();
