@@ -259,14 +259,7 @@ impl Transport {
 
     /// Get which mode the Rock device is booted.
     pub fn boot_mode(&self) -> Result<BootMode> {
-        let version = self
-            .handle
-            .device()
-            .device_descriptor()?
-            .device_version()
-            .sub_minor()
-            & 0x1;
-        Ok(version.into())
+        BootMode::from_usb_version(&self.handle.device().device_descriptor()?.device_version())
     }
 }
 
@@ -481,12 +474,14 @@ pub enum BootMode {
     Loader = 1,
 }
 
-impl From<u8> for BootMode {
-    fn from(value: u8) -> Self {
-        match value {
+impl BootMode {
+    pub fn from_usb_version(version: &rusb::Version) -> Result<BootMode> {
+        let boot_mode = match version.sub_minor() & 0x1 {
             0 => BootMode::Maskrom,
             1 => BootMode::Loader,
-            _ => panic!("cannot convert {} to BootMode", value),
-        }
+            _ => return Err(Error::UsbError(rusb::Error::NotFound)),
+        };
+
+        Ok(boot_mode)
     }
 }

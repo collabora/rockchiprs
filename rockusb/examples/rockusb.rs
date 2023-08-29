@@ -314,13 +314,9 @@ fn list_available_devices() -> Result<()> {
             Ok(mut d) => println!(
                 "* {:?} ({:?})",
                 d.handle().device(),
-                BootMode::from(
-                    d.handle()
-                        .device()
-                        .device_descriptor()?
-                        .device_version()
-                        .sub_minor()
-                )
+                BootMode::from_usb_version(
+                    &d.handle().device().device_descriptor()?.device_version()
+                )?
             ),
             Err(DeviceUnavalable { device, error }) => {
                 println!("* {:?} - Unavailable: {}", device, error)
