@@ -274,7 +274,7 @@ impl<T> TransportIO<T>
 where
     T: BorrowMut<Transport>,
 {
-    const MAXIO_SIZE: u64 = 128 * crate::protocol::SECTOR_SIZE as u64;
+    const MAXIO_SIZE: u64 = 128 * crate::protocol::SECTOR_SIZE;
     /// Create a new IO object around a given transport
     pub fn new(mut transport: T) -> Result<Self> {
         let info = transport.borrow_mut().flash_info()?;
