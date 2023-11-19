@@ -308,6 +308,10 @@ where
 
     // Want to start an i/o operation with a given maximum length
     fn pre_io(&mut self, len: u64) -> std::result::Result<IOOperation, std::io::Error> {
+        if self.offset >= self.size {
+            return Ok(IOOperation::Eof);
+        }
+
         // Offset inside the current sector
         let sector_offset = self.offset % SECTOR_SIZE;
         // bytes left from current position to end of current sector
@@ -316,7 +320,9 @@ where
         // If the I/O operation is starting at a sector edge and encompasses at least one sector
         // then direct I/O can be done
         if sector_offset == 0 && len >= SECTOR_SIZE {
-            let io_len = len / SECTOR_SIZE * SECTOR_SIZE;
+            // At most read the amount of bytes left
+            let left = self.size - self.offset;
+            let io_len = len.min(left) / SECTOR_SIZE * SECTOR_SIZE;
             Ok(IOOperation::Direct {
                 len: io_len.min(Self::MAXIO_SIZE) as usize,
             })
@@ -385,6 +391,7 @@ where
 enum IOOperation {
     Direct { len: usize },
     Buffered { offset: usize, len: usize },
+    Eof,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -409,6 +416,12 @@ where
                 self.state = BufferState::Dirty;
                 len
             }
+            IOOperation::Eof => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Trying to write past end of area",
+                ))
+            }
         };
         self.post_io(r as u64)
     }
@@ -429,6 +442,7 @@ where
                 buf[0..len].copy_from_slice(&self.buffer[offset..offset + len]);
                 len
             }
+            IOOperation::Eof => 0,
         };
         self.post_io(r as u64)
     }
