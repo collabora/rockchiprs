@@ -187,15 +187,19 @@ fn run_nbd(transport: Transport) -> Result<()> {
 
     let io = transport.into_io()?;
 
-    let export = nbd::Export {
-        size: io.size(),
-        readonly: false,
-        ..Default::default()
-    };
-
     println!("Connection!");
 
-    nbd::server::handshake(&mut stream, &export)?;
+    nbd::server::handshake(&mut stream, |_s| {
+        Ok(nbd::Export {
+            size: io.size(),
+            readonly: false,
+            resizeable: false,
+            rotational: false,
+            send_trim: false,
+            send_flush: true,
+            data: (),
+        })
+    })?;
     println!("Shook hands!");
     nbd::server::transmission(&mut stream, io)?;
     println!("nbd client disconnected");

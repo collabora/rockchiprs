@@ -17,18 +17,18 @@ libusb = ["dep:rusb"]
 [dependencies]
 bytes = "1.4.0"
 crc = "3.0.1"
-fastrand = "1.9.0"
-num_enum = "0.5.9"
+fastrand = "2"
+num_enum = "0.7"
 thiserror = "1.0.38"
 rusb = { version = "0.9.1", optional = true }
 
 [dev-dependencies]
 anyhow = "1.0.69"
-bmap-parser = "0.1.0"
+bmap-parser = "0.2.0"
 clap = { version = "4.2", features = ["derive"] }
 clap-num = "1.0"
 flate2 = "1.0.25"
-nbd = "0.2.3"
+nbd = "0.3"
 rockfile = { path = "../rockfile", version = "0.1.1" }
 rusb = "0.9.1"
 
