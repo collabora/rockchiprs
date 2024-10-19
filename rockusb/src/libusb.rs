@@ -84,7 +84,7 @@ pub struct Transport {
 
 impl Transport {
     fn new(
-        mut handle: DeviceHandle<rusb::GlobalContext>,
+        handle: DeviceHandle<rusb::GlobalContext>,
         interface: u8,
         ep_in: u8,
         ep_out: u8,
