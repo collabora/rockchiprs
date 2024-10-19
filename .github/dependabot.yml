@@ -1,0 +1,17 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # Not yet supported. See <https://github.com/dependabot/dependabot-core/issues/4009>.
+    # versioning-strategy: "increase-if-necessary"
+    ignore:
+      - dependency-name: "tokio"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "*"
+        update-types: ["version-update:semver-patch"]

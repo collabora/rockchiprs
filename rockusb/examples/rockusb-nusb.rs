@@ -1,26 +1,30 @@
 use std::{
     ffi::OsStr,
-    fs::File,
-    io::{BufWriter, Read, Seek, SeekFrom, Write},
-    net::TcpListener,
+    io::SeekFrom,
     path::{Path, PathBuf},
     thread::sleep,
     time::Duration,
 };
 
 use anyhow::{anyhow, Result};
+use async_compression::futures::bufread::GzipDecoder;
 use bmap_parser::Bmap;
 use clap::{Parser, ValueEnum};
 use clap_num::maybe_hex;
-use flate2::read::GzDecoder;
+use futures::io::{BufReader, BufWriter};
 use rockfile::boot::{
     RkBootEntry, RkBootEntryBytes, RkBootHeader, RkBootHeaderBytes, RkBootHeaderEntry,
 };
-use rockusb::libusb::{DeviceUnavalable, Transport};
+use rockusb::nusb::Transport;
 use rockusb::protocol::ResetOpcode;
+use tokio::{
+    fs::File,
+    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
+};
+use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
 
-fn read_flash_info(mut transport: Transport) -> Result<()> {
-    let info = transport.flash_info()?;
+async fn read_flash_info(mut transport: Transport) -> Result<()> {
+    let info = transport.flash_info().await?;
     println!("Raw Flash Info: {:0x?}", info);
     println!(
         "Flash size: {} MB ({} sectors)",
@@ -31,46 +35,56 @@ fn read_flash_info(mut transport: Transport) -> Result<()> {
     Ok(())
 }
 
-fn reset_device(mut transport: Transport, opcode: ResetOpcode) -> Result<()> {
-    transport.reset_device(opcode)?;
+async fn reset_device(mut transport: Transport, opcode: ResetOpcode) -> Result<()> {
+    transport.reset_device(opcode).await?;
     Ok(())
 }
 
-fn read_chip_info(mut transport: Transport) -> Result<()> {
-    println!("Chip Info: {:0x?}", transport.chip_info()?);
+async fn read_chip_info(mut transport: Transport) -> Result<()> {
+    println!("Chip Info: {:0x?}", transport.chip_info().await?);
     Ok(())
 }
 
-fn read_lba(mut transport: Transport, offset: u32, length: u16, path: &Path) -> Result<()> {
+async fn read_lba(mut transport: Transport, offset: u32, length: u16, path: &Path) -> Result<()> {
     let mut data = vec![0; length as usize * 512];
-    transport.read_lba(offset, &mut data)?;
+    transport.read_lba(offset, &mut data).await?;
 
-    let mut file = std::fs::OpenOptions::new()
+    let mut file = tokio::fs::OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
-        .open(path)?;
-    file.write_all(&data)?;
+        .open(path)
+        .await?;
+    file.write_all(&data).await?;
     Ok(())
 }
 
-fn write_lba(mut transport: Transport, offset: u32, length: u16, path: &Path) -> Result<()> {
+async fn write_lba(mut transport: Transport, offset: u32, length: u16, path: &Path) -> Result<()> {
     let mut data = vec![0; length as usize * 512];
 
-    let mut file = File::open(path)?;
-    file.read_exact(&mut data)?;
+    let mut file = File::open(path).await?;
+    file.read_exact(&mut data).await?;
 
-    transport.write_lba(offset, &data)?;
+    transport.write_lba(offset, &data).await?;
 
     Ok(())
 }
 
-fn write_file(mut transport: Transport, offset: u32, path: &Path) -> Result<()> {
-    let mut file = File::open(path)?;
-    let mut io = transport.io()?;
+async fn read_file(transport: Transport, offset: u32, length: u16, path: &Path) -> Result<()> {
+    let mut file = tokio::fs::File::create(path).await?;
+    let mut io = transport.into_io().await?.compat();
 
-    io.seek(SeekFrom::Start(offset as u64 * 512))?;
-    std::io::copy(&mut file, &mut io)?;
+    io.seek(SeekFrom::Start(offset as u64 * 512)).await?;
+    tokio::io::copy(&mut io.take(length as u64 * 512), &mut file).await?;
+    Ok(())
+}
+
+async fn write_file(transport: Transport, offset: u32, path: &Path) -> Result<()> {
+    let mut file = tokio::fs::File::open(path).await?;
+    let mut io = transport.into_io().await?.compat();
+
+    io.seek(SeekFrom::Start(offset as u64 * 512)).await?;
+    tokio::io::copy(&mut file, &mut io).await?;
     Ok(())
 }
 
@@ -95,34 +109,35 @@ fn find_bmap(img: &Path) -> Option<PathBuf> {
     }
 }
 
-fn write_bmap(transport: Transport, path: &Path) -> Result<()> {
+async fn write_bmap(transport: Transport, path: &Path) -> Result<()> {
     let bmap_path = find_bmap(path).ok_or_else(|| anyhow!("Failed to find bmap"))?;
     println!("Using bmap file: {}", path.display());
 
-    let mut bmap_file = File::open(bmap_path)?;
+    let mut bmap_file = File::open(bmap_path).await?;
     let mut xml = String::new();
-    bmap_file.read_to_string(&mut xml)?;
+    bmap_file.read_to_string(&mut xml).await?;
     let bmap = Bmap::from_xml(&xml)?;
 
     // HACK to minimize small writes
-    let mut writer = BufWriter::with_capacity(16 * 1024 * 1024, transport.into_io()?);
+    let mut writer = BufWriter::with_capacity(16 * 1024 * 1024, transport.into_io().await?);
 
-    let mut file = File::open(path)?;
+    let file = File::open(path).await?;
+    let mut file = BufReader::with_capacity(16 * 1024 * 1024, file.compat());
     match path.extension().and_then(OsStr::to_str) {
         Some("gz") => {
-            let gz = GzDecoder::new(file);
-            let mut gz = bmap_parser::Discarder::new(gz);
-            bmap_parser::copy(&mut gz, &mut writer, &bmap)?;
+            let gz = GzipDecoder::new(file);
+            let mut gz = bmap_parser::AsyncDiscarder::new(gz);
+            bmap_parser::copy_async(&mut gz, &mut writer, &bmap).await?;
         }
         _ => {
-            bmap_parser::copy(&mut file, &mut writer, &bmap)?;
+            bmap_parser::copy_async(&mut file, &mut writer, &bmap).await?;
         }
     }
 
     Ok(())
 }
 
-fn download_entry(
+async fn download_entry(
     header: RkBootHeaderEntry,
     code: u16,
     file: &mut File,
@@ -133,18 +148,19 @@ fn download_entry(
 
         file.seek(SeekFrom::Start(
             header.offset as u64 + (header.size * i) as u64,
-        ))?;
-        file.read_exact(&mut entry)?;
+        ))
+        .await?;
+        file.read_exact(&mut entry).await?;
 
         let entry = RkBootEntry::from_bytes(&entry);
         println!("{} Name: {}", i, String::from_utf16(entry.name.as_slice())?);
 
         let mut data = vec![0; entry.data_size as usize];
 
-        file.seek(SeekFrom::Start(entry.data_offset as u64))?;
-        file.read_exact(&mut data)?;
+        file.seek(SeekFrom::Start(entry.data_offset as u64)).await?;
+        file.read_exact(&mut data).await?;
 
-        transport.write_maskrom_area(code, &data)?;
+        transport.write_maskrom_area(code, &data).await?;
 
         println!("Done!... waiting {}ms", entry.data_delay);
         if entry.data_delay > 0 {
@@ -155,54 +171,17 @@ fn download_entry(
     Ok(())
 }
 
-fn download_boot(mut transport: Transport, path: &Path) -> Result<()> {
-    let mut file = File::open(path)?;
+async fn download_boot(mut transport: Transport, path: &Path) -> Result<()> {
+    let mut file = File::open(path).await?;
     let mut header: RkBootHeaderBytes = [0; 102];
-    file.read_exact(&mut header)?;
+    file.read_exact(&mut header).await?;
 
     let header =
         RkBootHeader::from_bytes(&header).ok_or_else(|| anyhow!("Failed to parse header"))?;
 
-    download_entry(header.entry_471, 0x471, &mut file, &mut transport)?;
-    download_entry(header.entry_472, 0x472, &mut file, &mut transport)?;
+    download_entry(header.entry_471, 0x471, &mut file, &mut transport).await?;
+    download_entry(header.entry_472, 0x472, &mut file, &mut transport).await?;
 
-    Ok(())
-}
-
-fn run_nbd(transport: Transport) -> Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:10809").unwrap();
-
-    println!(
-        "Listening for nbd connection on: {:?}",
-        listener.local_addr()?
-    );
-
-    let mut stream = listener
-        .incoming()
-        .next()
-        .transpose()?
-        .ok_or_else(|| anyhow!("Connection failure"))?;
-    // Stop listening for new connections
-    drop(listener);
-
-    let io = transport.into_io()?;
-
-    println!("Connection!");
-
-    nbd::server::handshake(&mut stream, |_s| {
-        Ok(nbd::Export {
-            size: io.size(),
-            readonly: false,
-            resizeable: false,
-            rotational: false,
-            send_trim: false,
-            send_flush: true,
-            data: (),
-        })
-    })?;
-    println!("Shook hands!");
-    nbd::server::transmission(&mut stream, io)?;
-    println!("nbd client disconnected");
     Ok(())
 }
 
@@ -213,6 +192,13 @@ enum Command {
         path: PathBuf,
     },
     Read {
+        #[clap(value_parser=maybe_hex::<u32>)]
+        offset: u32,
+        #[clap(value_parser=maybe_hex::<u16>)]
+        length: u16,
+        path: PathBuf,
+    },
+    ReadFile {
         #[clap(value_parser=maybe_hex::<u32>)]
         offset: u32,
         #[clap(value_parser=maybe_hex::<u16>)]
@@ -241,8 +227,6 @@ enum Command {
         #[clap(value_enum, default_value_t=ArgResetOpcode::Reset)]
         opcode: ArgResetOpcode,
     },
-    // Run/expose device as a network block device
-    Nbd,
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -308,21 +292,23 @@ struct Opts {
 }
 
 fn list_available_devices() -> Result<()> {
-    let devices = rockusb::libusb::Devices::new()?;
-    println!("Available rockchip devices");
-    for d in devices.iter() {
-        match d {
-            Ok(mut d) => println!("* {:?}", d.handle().device()),
-            Err(DeviceUnavalable { device, error }) => {
-                println!("* {:?} - Unavailable: {}", device, error)
-            }
-        }
+    let devices = rockusb::nusb::devices()?;
+    println!("Available rockchip devices:");
+    for d in devices {
+        println!(
+            "* Bus {} Device {} ID {}:{}",
+            d.bus_number(),
+            d.device_address(),
+            d.vendor_id(),
+            d.product_id()
+        );
     }
 
     Ok(())
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let opt = Opts::parse();
 
     // Commands that don't talk a device
@@ -330,21 +316,13 @@ fn main() -> Result<()> {
         return list_available_devices();
     }
 
-    let devices = rockusb::libusb::Devices::new()?;
-    let mut transport = if let Some(dev) = opt.device {
+    let mut devices = rockusb::nusb::devices()?;
+    let info = if let Some(dev) = opt.device {
         devices
-            .iter()
-            .find(|d| match d {
-                Ok(device) => {
-                    device.bus_number() == dev.bus_number && device.address() == dev.address
-                }
-                Err(DeviceUnavalable { device, .. }) => {
-                    device.bus_number() == dev.bus_number && device.address() == dev.address
-                }
-            })
+            .find(|d| d.bus_number() == dev.bus_number && d.device_address() == dev.address)
             .ok_or_else(|| anyhow!("Specified device not found"))?
     } else {
-        let mut devices: Vec<_> = devices.iter().collect();
+        let mut devices: Vec<_> = devices.collect();
         match devices.len() {
             0 => Err(anyhow!("No devices found")),
             1 => Ok(devices.pop().unwrap()),
@@ -357,32 +335,38 @@ fn main() -> Result<()> {
                 ))
             }
         }?
-    }?;
+    };
+
+    let mut transport = Transport::from_usb_device_info(info)?;
 
     match opt.command {
         Command::List => unreachable!(),
-        Command::DownloadBoot { path } => download_boot(transport, &path),
+        Command::DownloadBoot { path } => download_boot(transport, &path).await,
         Command::Read {
             offset,
             length,
             path,
-        } => read_lba(transport, offset, length, &path),
+        } => read_lba(transport, offset, length, &path).await,
+        Command::ReadFile {
+            offset,
+            length,
+            path,
+        } => read_file(transport, offset, length, &path).await,
         Command::Write {
             offset,
             length,
             path,
-        } => write_lba(transport, offset, length, &path),
-        Command::WriteFile { offset, path } => write_file(transport, offset, &path),
-        Command::WriteBmap { path } => write_bmap(transport, &path),
-        Command::ChipInfo => read_chip_info(transport),
+        } => write_lba(transport, offset, length, &path).await,
+        Command::WriteFile { offset, path } => write_file(transport, offset, &path).await,
+        Command::WriteBmap { path } => write_bmap(transport, &path).await,
+        Command::ChipInfo => read_chip_info(transport).await,
         Command::FlashId => {
-            let id = transport.flash_id()?;
+            let id = transport.flash_id().await?;
             println!("Flash id: {}", id.to_str());
             println!("raw: {:?}", id);
             Ok(())
         }
-        Command::FlashInfo => read_flash_info(transport),
-        Command::ResetDevice { opcode } => reset_device(transport, opcode.into()),
-        Command::Nbd => run_nbd(transport),
+        Command::FlashInfo => read_flash_info(transport).await,
+        Command::ResetDevice { opcode } => reset_device(transport, opcode.into()).await,
     }
 }

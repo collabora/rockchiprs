@@ -22,8 +22,7 @@ fn parse_entry(header: RkBootHeaderEntry, name: &str, file: &mut File) -> Result
         println!("Name: {}", String::from_utf16(entry.name.as_slice())?);
         println!("Raw: {:?}", entry);
 
-        let mut data = Vec::new();
-        data.resize(entry.data_size as usize, 0);
+        let mut data = vec![0; entry.data_size as usize];
         file.seek(SeekFrom::Start(entry.data_offset as u64))?;
         file.read_exact(&mut data)?;
 
