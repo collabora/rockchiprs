@@ -11,8 +11,8 @@ readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
-default = ["libusb"]
 libusb = ["dep:rusb"]
+nusb = ["dep:nusb", "dep:futures"]
 
 [dependencies]
 bytes = "1.4.0"
@@ -21,6 +21,8 @@ fastrand = "2"
 num_enum = "0.7"
 thiserror = "1.0.38"
 rusb = { version = "0.9.1", optional = true }
+nusb = { version = "0.1.10", optional = true }
+futures = { version = "0.3.31", optional = true }
 
 [dev-dependencies]
 anyhow = "1.0.69"
@@ -31,7 +33,15 @@ flate2 = "1.0.25"
 nbd = "0.3"
 rockfile = { path = "../rockfile", version = "0.1.1" }
 rusb = "0.9.1"
+tokio = { version = "1.40.0", features = ["full"] }
+futures = { version = "0.3.31", features = ["compat", "io-compat"]}
+tokio-util = { version = "0.7.12", features = ["compat"] }
+async-compression = { version = "0.4.5", features = ["gzip", "futures-io"] }
 
 [[example]]
 name="rockusb"
 required-features = ["libusb"]
+
+[[example]]
+name="rockusb-nusb"
+required-features = ["nusb"]

@@ -3,6 +3,9 @@
 /// libusb transport implementation
 #[cfg(feature = "libusb")]
 pub mod libusb;
+/// nusb transport implementation
+#[cfg(feature = "nusb")]
+pub mod nusb;
 /// sans-io protocol implementationsss
 ///
 /// This module contains all protocol logic; Each operation implements the [operation::OperationSteps]
