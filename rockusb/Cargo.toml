@@ -38,6 +38,10 @@ futures = { version = "0.3.31", features = ["compat", "io-compat"]}
 tokio-util = { version = "0.7.12", features = ["compat"] }
 async-compression = { version = "0.4.5", features = ["gzip", "futures-io"] }
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [[example]]
 name="rockusb"
 required-features = ["libusb"]

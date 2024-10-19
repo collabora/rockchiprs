@@ -148,14 +148,14 @@ impl Transport {
         })
     }
 
-    /// Create an IO object which implements [Read](std::io::Read), [Write](std::io::Write) and
-    /// [Seek](std::io::Seek)
+    /// Create an IO object which implements [Read], [Write] and
+    /// [Seek]
     pub fn io(&mut self) -> Result<TransportIO<&mut Self>> {
         TransportIO::new(self)
     }
 
-    /// Convert into an IO object which implements [Read](std::io::Read), [Write](std::io::Write) and
-    /// [Seek](std::io::Seek)
+    /// Convert into an IO object which implements [Read], [Write] and
+    /// [Seek]
     pub fn into_io(self) -> Result<TransportIO<Self>> {
         TransportIO::new(self)
     }
@@ -230,8 +230,8 @@ impl Transport {
 
     /// read from the flash
     ///
-    /// start_sector with [SECTOR_SIZE](crate::protocol::SECTOR_SIZE) sectors. the data to be read
-    /// must be a multiple of [SECTOR_SIZE](crate::protocol::SECTOR_SIZE) bytes
+    /// start_sector with [SECTOR_SIZE] sectors. the data to be read
+    /// must be a multiple of [SECTOR_SIZE] bytes
     pub fn read_lba(&mut self, start_sector: u32, read: &mut [u8]) -> Result<u32> {
         self.handle_operation(crate::operation::read_lba(start_sector, read))
             .map(|t| t.into())
@@ -239,8 +239,8 @@ impl Transport {
 
     /// Create operation to read an lba from the flash
     ///
-    /// start_sector based on [SECTOR_SIZE](crate::protocol::SECTOR_SIZE) sectors. the data to be
-    /// written must be a multiple of [SECTOR_SIZE](crate::protocol::SECTOR_SIZE) bytes
+    /// start_sector based on [SECTOR_SIZE] sectors. the data to be
+    /// written must be a multiple of [SECTOR_SIZE] bytes
     pub fn write_lba(&mut self, start_sector: u32, write: &[u8]) -> Result<u32> {
         self.handle_operation(crate::operation::write_lba(start_sector, write))
             .map(|t| t.into())
@@ -258,8 +258,7 @@ impl Transport {
     }
 }
 
-/// IO object which implements [Read](std::io::Read), [Write](std::io::Write) and
-/// [Seek](std::io::Seek)
+/// IO object which implements [Read], [Write] and [Seek]
 pub struct TransportIO<T> {
     transport: T,
     size: u64,

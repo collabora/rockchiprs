@@ -95,8 +95,8 @@ impl Transport {
         })
     }
 
-    /// Convert into an IO object which implements [AsyncRead](futures::io::AsyncRead),
-    /// [AsyncWrite](futures::io::AsyncWrite) and [AsyncSeek](futures::io::AsyncSeek)
+    /// Convert into an IO object which implements [AsyncRead],
+    /// [AsyncWrite] and [AsyncSeek]
     pub async fn into_io(self) -> Result<TransportIO> {
         TransportIO::new(self).await
     }
@@ -178,8 +178,8 @@ impl Transport {
 
     /// read from the flash
     ///
-    /// start_sector with [SECTOR_SIZE](crate::protocol::SECTOR_SIZE) sectors. the data to be read
-    /// must be a multiple of [SECTOR_SIZE](crate::protocol::SECTOR_SIZE) bytes
+    /// start_sector with [SECTOR_SIZE] sectors. the data to be read
+    /// must be a multiple of [SECTOR_SIZE] bytes
     pub async fn read_lba(&mut self, start_sector: u32, read: &mut [u8]) -> Result<u32> {
         self.handle_operation(crate::operation::read_lba(start_sector, read))
             .await
@@ -188,8 +188,8 @@ impl Transport {
 
     /// Create operation to read an lba from the flash
     ///
-    /// start_sector based on [SECTOR_SIZE](crate::protocol::SECTOR_SIZE) sectors. the data to be
-    /// written must be a multiple of [SECTOR_SIZE](crate::protocol::SECTOR_SIZE) bytes
+    /// start_sector based on [SECTOR_SIZE] sectors. the data to be
+    /// written must be a multiple of [SECTOR_SIZE] bytes
     pub async fn write_lba(&mut self, start_sector: u32, write: &[u8]) -> Result<u32> {
         self.handle_operation(crate::operation::write_lba(start_sector, write))
             .await
@@ -228,8 +228,7 @@ struct TransportIOInner {
     state: BufferState,
 }
 
-/// IO object which implements [AsyncRead](futures::io::AsyncRead),
-/// [AsyncWrite](futures::io::AsyncWrite) and [AsyncSeek](futures::io::AsyncSeek)
+/// IO object which implements [AsyncRead], [AsyncWrite] and [AsyncSeek]
 pub struct TransportIO {
     // io execution state
     io_state: IoState,
