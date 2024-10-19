@@ -42,8 +42,7 @@ fn read_chip_info(mut transport: Transport) -> Result<()> {
 }
 
 fn read_lba(mut transport: Transport, offset: u32, length: u16, path: &Path) -> Result<()> {
-    let mut data = Vec::new();
-    data.resize(length as usize * 512, 0);
+    let mut data = vec![0; length as usize * 512];
     transport.read_lba(offset, &mut data)?;
 
     let mut file = std::fs::OpenOptions::new()
@@ -56,8 +55,7 @@ fn read_lba(mut transport: Transport, offset: u32, length: u16, path: &Path) -> 
 }
 
 fn write_lba(mut transport: Transport, offset: u32, length: u16, path: &Path) -> Result<()> {
-    let mut data = Vec::new();
-    data.resize(length as usize * 512, 0);
+    let mut data = vec![0; length as usize * 512];
 
     let mut file = File::open(path)?;
     file.read_exact(&mut data)?;
@@ -141,8 +139,7 @@ fn download_entry(
         let entry = RkBootEntry::from_bytes(&entry);
         println!("{} Name: {}", i, String::from_utf16(entry.name.as_slice())?);
 
-        let mut data = Vec::new();
-        data.resize(entry.data_size as usize, 0);
+        let mut data = vec![0; entry.data_size as usize];
 
         file.seek(SeekFrom::Start(entry.data_offset as u64))?;
         file.read_exact(&mut data)?;
