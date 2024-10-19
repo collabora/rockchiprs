@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.81
+      - uses: dtolnay/rust-toolchain@1.90
       - run: cargo test --all-targets --all-features
       - run: cargo test --doc --all-features
 
@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.81
+      - uses: dtolnay/rust-toolchain@1.90
         with:
             components: rustfmt
       - run: cargo fmt --all --check
@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.81
+      - uses: dtolnay/rust-toolchain@1.90
         with:
             components: clippy
       - run: cargo clippy --all-targets --all-features -- -D warnings
