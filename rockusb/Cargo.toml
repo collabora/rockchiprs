@@ -31,7 +31,7 @@ clap = { version = "4.2", features = ["derive"] }
 clap-num = "1.0"
 flate2 = "1.0.25"
 nbd = "0.3"
-rockfile = { path = "../rockfile", version = "0.1.1" }
+rockfile = { path = "../rockfile", version = "0.1.2" }
 rusb = "0.9.1"
 tokio = { version = "1.40.0", features = ["full"] }
 futures = { version = "0.3.31", features = ["compat", "io-compat"]}
