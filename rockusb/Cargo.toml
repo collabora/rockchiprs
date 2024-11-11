@@ -19,7 +19,7 @@ bytes = "1.4.0"
 crc = "3.0.1"
 fastrand = "2"
 num_enum = "0.7"
-thiserror = "1.0.38"
+thiserror = "2.0.3"
 rusb = { version = "0.9.4", optional = true }
 nusb = { version = "0.1.10", optional = true }
 futures = { version = "0.3.31", optional = true }
