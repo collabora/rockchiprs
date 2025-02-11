@@ -392,7 +392,7 @@ pub fn read_lba(start_sector: u32, read: &mut [u8]) -> UsbOperation<'_, Transfer
     )
 }
 
-/// Create operation to read an lba from the flash
+/// Create operation to write an lba to the flash
 ///
 /// start_sector with [protocol::SECTOR_SIZE] sectors. the data to be written must be a multiple of
 /// [protocol::SECTOR_SIZE] bytes
