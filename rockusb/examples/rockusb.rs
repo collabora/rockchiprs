@@ -97,7 +97,7 @@ fn find_bmap(img: &Path) -> Option<PathBuf> {
 
 fn write_bmap(transport: Transport, path: &Path) -> Result<()> {
     let bmap_path = find_bmap(path).ok_or_else(|| anyhow!("Failed to find bmap"))?;
-    println!("Using bmap file: {}", path.display());
+    println!("Using bmap file: {}", bmap_path.display());
 
     let mut bmap_file = File::open(bmap_path)?;
     let mut xml = String::new();
