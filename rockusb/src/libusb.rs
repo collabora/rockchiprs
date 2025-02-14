@@ -233,6 +233,11 @@ impl Transport {
         self.handle_operation(crate::operation::capability())
     }
 
+    /// erase specified blocks
+    pub fn erase_blocks(&mut self, first: u32, count: u16, lba: bool) -> Result<()> {
+        self.handle_operation(crate::operation::erase_blocks(first, count, lba))
+    }
+
     /// read from the flash
     ///
     /// start_sector with [SECTOR_SIZE] sectors. the data to be read
