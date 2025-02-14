@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     operation::{OperationSteps, UsbStep},
-    protocol::{ChipInfo, FlashId, FlashInfo, ResetOpcode, SECTOR_SIZE},
+    protocol::{Capability, ChipInfo, FlashId, FlashInfo, ResetOpcode, SECTOR_SIZE},
 };
 use rusb::{DeviceHandle, GlobalContext};
 use thiserror::Error;
@@ -226,6 +226,11 @@ impl Transport {
     /// retrieve SoC chip info
     pub fn chip_info(&mut self) -> Result<ChipInfo> {
         self.handle_operation(crate::operation::chip_info())
+    }
+
+    /// retrieve SoC capability
+    pub fn capability(&mut self) -> Result<Capability> {
+        self.handle_operation(crate::operation::capability())
     }
 
     /// read from the flash

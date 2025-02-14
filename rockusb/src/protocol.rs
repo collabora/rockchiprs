@@ -165,6 +165,64 @@ impl FlashInfo {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Capability([u8; 8]);
+impl Capability {
+    const DIRECT_LBA: [u8; 2] = [0, 0x01];
+    const VENDOR_STORAGE: [u8; 2] = [0, 0x02];
+    const FIRST_4M_ACCESS: [u8; 2] = [0, 0x04];
+    const READ_LBA: [u8; 2] = [0, 0x08];
+    const READ_COM_LOG: [u8; 2] = [0, 0x20];
+    const READ_IDB_CONFIG: [u8; 2] = [0, 0x40];
+    const READ_SECURE_MODE: [u8; 2] = [0, 0x80];
+    const NEW_IDB: [u8; 2] = [1, 0x01];
+
+    pub fn from_bytes(data: [u8; 8]) -> Self {
+        Capability(data)
+    }
+
+    pub fn direct_lba(&self) -> bool {
+        self.check_flag(Self::DIRECT_LBA)
+    }
+
+    pub fn vendor_storage(&self) -> bool {
+        self.check_flag(Self::VENDOR_STORAGE)
+    }
+
+    pub fn first_4m_access(&self) -> bool {
+        self.check_flag(Self::FIRST_4M_ACCESS)
+    }
+
+    pub fn read_lba(&self) -> bool {
+        self.check_flag(Self::READ_LBA)
+    }
+
+    pub fn read_com_log(&self) -> bool {
+        self.check_flag(Self::READ_COM_LOG)
+    }
+
+    pub fn read_idb_config(&self) -> bool {
+        self.check_flag(Self::READ_IDB_CONFIG)
+    }
+
+    pub fn read_secure_mode(&self) -> bool {
+        self.check_flag(Self::READ_SECURE_MODE)
+    }
+
+    pub fn new_idb(&self) -> bool {
+        self.check_flag(Self::NEW_IDB)
+    }
+
+    pub fn inner(&self) -> &[u8] {
+        &self.0
+    }
+
+    fn check_flag(&self, flag: [u8; 2]) -> bool {
+        let [idx, bit] = flag;
+        self.0[idx as usize] & bit == bit
+    }
+}
+
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum CommandBlockParseError {
     #[error("Invalid Command block signature: {0:x?}")]
@@ -224,6 +282,20 @@ impl CommandBlock {
             cd_opcode: 0,
             cd_address: 0,
             cd_length: 0x0,
+        }
+    }
+
+    pub fn capability() -> CommandBlock {
+        CommandBlock {
+            tag: fastrand::u32(..),
+            transfer_length: 8,
+            flags: Direction::In,
+            lun: 0,
+            cdb_length: 0x6,
+            cd_code: CommandCode::ReadCapability,
+            cd_opcode: 0,
+            cd_address: 0,
+            cd_length: 0,
         }
     }
 

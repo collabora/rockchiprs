@@ -31,6 +31,45 @@ fn read_flash_info(mut transport: Transport) -> Result<()> {
     Ok(())
 }
 
+fn read_capability(mut transport: Transport) -> Result<()> {
+    let capability = transport.capability()?;
+    println!("Raw Capability: {:0x?}", capability);
+    println!("Capability:");
+    if capability.direct_lba() {
+        println!(" - Direct LBA");
+    }
+
+    if capability.vendor_storage() {
+        println!(" - Vendor storage");
+    }
+
+    if capability.first_4m_access() {
+        println!(" - First 4M Access");
+    }
+
+    if capability.read_lba() {
+        println!(" - Read LBA");
+    }
+
+    if capability.read_com_log() {
+        println!(" - Read COM log");
+    }
+
+    if capability.read_idb_config() {
+        println!(" - Read IDB config");
+    }
+
+    if capability.read_secure_mode() {
+        println!(" - Read secure mode");
+    }
+
+    if capability.new_idb() {
+        println!(" - New IDB");
+    }
+
+    Ok(())
+}
+
 fn reset_device(mut transport: Transport, opcode: ResetOpcode) -> Result<()> {
     transport.reset_device(opcode)?;
     Ok(())
@@ -237,6 +276,7 @@ enum Command {
     ChipInfo,
     FlashId,
     FlashInfo,
+    Capability,
     ResetDevice {
         #[clap(value_enum, default_value_t=ArgResetOpcode::Reset)]
         opcode: ArgResetOpcode,
@@ -382,6 +422,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::FlashInfo => read_flash_info(transport),
+        Command::Capability => read_capability(transport),
         Command::ResetDevice { opcode } => reset_device(transport, opcode.into()),
         Command::Nbd => run_nbd(transport),
     }
