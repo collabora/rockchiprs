@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, ensure, Result};
 use bmap_parser::Bmap;
 use clap::{Parser, ValueEnum};
 use clap_num::maybe_hex;
@@ -16,18 +16,24 @@ use flate2::read::GzDecoder;
 use rockfile::boot::{
     RkBootEntry, RkBootEntryBytes, RkBootHeader, RkBootHeaderBytes, RkBootHeaderEntry,
 };
-use rockusb::libusb::{DeviceUnavalable, Transport};
 use rockusb::protocol::ResetOpcode;
+use rockusb::{
+    libusb::{DeviceUnavalable, Transport},
+    protocol::FlashInfo,
+};
 
-fn read_flash_info(mut transport: Transport) -> Result<()> {
-    let info = transport.flash_info()?;
+fn print_flash_info(info: &FlashInfo) {
     println!("Raw Flash Info: {:0x?}", info);
     println!(
         "Flash size: {} MB ({} sectors)",
         info.sectors() / 2048,
         info.sectors()
     );
+}
 
+fn read_flash_info(mut transport: Transport) -> Result<()> {
+    let info = transport.flash_info()?;
+    print_flash_info(&info);
     Ok(())
 }
 
@@ -65,6 +71,48 @@ fn read_capability(mut transport: Transport) -> Result<()> {
 
     if capability.new_idb() {
         println!(" - New IDB");
+    }
+
+    Ok(())
+}
+
+static MAX_BLOCKS_ERASE: u32 = 16;
+static MAX_DIRECT_ERASE: u32 = 1024;
+static MAX_LBA_ERASE: u32 = 32 * 1024;
+
+fn erase_flash(mut transport: Transport) -> Result<()> {
+    // Get flash info
+    let flash_info = transport.flash_info()?;
+    print_flash_info(&flash_info);
+
+    ensure!(flash_info.sectors() > 0, "Invalid flash chip");
+
+    // Get flash id
+    let flash_id = transport.flash_id()?;
+    let is_direct = flash_id.to_str() == "NAND " || flash_id.to_str() == "NOR  ";
+
+    // Get flash capability
+    let capability = transport.capability()?;
+
+    let is_lba = capability.direct_lba() || !is_direct;
+
+    let mut blocks_left = flash_info.sectors();
+    let mut first = 0;
+    let max_blocks = if is_direct {
+        MAX_DIRECT_ERASE
+    } else if is_lba {
+        MAX_LBA_ERASE
+    } else {
+        MAX_BLOCKS_ERASE
+    };
+
+    while blocks_left > 0 {
+        let count = blocks_left.min(max_blocks);
+
+        transport.erase_blocks(first, count as u16, is_lba)?;
+
+        blocks_left -= count;
+        first += count;
     }
 
     Ok(())
@@ -277,6 +325,7 @@ enum Command {
     FlashId,
     FlashInfo,
     Capability,
+    EraseFlash,
     ResetDevice {
         #[clap(value_enum, default_value_t=ArgResetOpcode::Reset)]
         opcode: ArgResetOpcode,
@@ -423,6 +472,7 @@ fn main() -> Result<()> {
         }
         Command::FlashInfo => read_flash_info(transport),
         Command::Capability => read_capability(transport),
+        Command::EraseFlash => erase_flash(transport),
         Command::ResetDevice { opcode } => reset_device(transport, opcode.into()),
         Command::Nbd => run_nbd(transport),
     }

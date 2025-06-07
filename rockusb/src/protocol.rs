@@ -299,6 +299,24 @@ impl CommandBlock {
         }
     }
 
+    pub fn erase_blocks(first: u32, count: u16, lba: bool) -> CommandBlock {
+        CommandBlock {
+            tag: fastrand::u32(..),
+            transfer_length: 0,
+            flags: Direction::Out,
+            lun: 0,
+            cdb_length: 0xa,
+            cd_code: if lba {
+                CommandCode::EraseLBA
+            } else {
+                CommandCode::EraseForce
+            },
+            cd_opcode: 0,
+            cd_address: first,
+            cd_length: count,
+        }
+    }
+
     pub fn chip_info() -> CommandBlock {
         CommandBlock {
             tag: fastrand::u32(..),

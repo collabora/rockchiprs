@@ -355,6 +355,10 @@ impl FromOperation for Capability {
     }
 }
 
+pub fn erase_blocks(first: u32, count: u16, lba: bool) -> UsbOperation<'static, ()> {
+    UsbOperation::new(CommandBlock::erase_blocks(first, count, lba))
+}
+
 /// Create operation to retrieve SoC capability
 pub fn capability() -> UsbOperation<'static, Capability> {
     UsbOperation::new(CommandBlock::capability())
