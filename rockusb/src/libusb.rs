@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     operation::{OperationSteps, UsbStep},
-    protocol::{Capability, ChipInfo, FlashId, FlashInfo, ResetOpcode, SECTOR_SIZE},
+    protocol::SECTOR_SIZE,
 };
 use rusb::{DeviceHandle, GlobalContext};
 use thiserror::Error;
@@ -19,15 +19,6 @@ pub struct DeviceUnavalable {
     #[source]
     pub error: rusb::Error,
 }
-
-#[derive(Debug, Clone, Eq, PartialEq, Error)]
-pub enum Error {
-    #[error("Usb error: {0}")]
-    UsbError(#[from] rusb::Error),
-    #[error("Operation error: {0}")]
-    OperationError(#[from] crate::operation::UsbOperationError),
-}
-type Result<T> = std::result::Result<T, Error>;
 
 /// Rockchip devices
 pub struct Devices {
@@ -53,7 +44,7 @@ pub struct DevicesIter<'a> {
 }
 
 impl Iterator for DevicesIter<'_> {
-    type Item = std::result::Result<Transport, DeviceUnavalable>;
+    type Item = std::result::Result<Device, DeviceUnavalable>;
 
     fn next(&mut self) -> Option<Self::Item> {
         for device in self.iter.by_ref() {
@@ -69,13 +60,13 @@ impl Iterator for DevicesIter<'_> {
                 Err(error) => return Some(Err(DeviceUnavalable { device, error })),
             };
 
-            return Some(Transport::from_usb_device(handle));
+            return Some(Device::from_usb_device(handle));
         }
         None
     }
 }
 
-/// libusb based Transport for rockusb operation
+/// libusb based Transport
 pub struct Transport {
     handle: DeviceHandle<rusb::GlobalContext>,
     ep_in: u8,
@@ -83,99 +74,14 @@ pub struct Transport {
 }
 
 impl Transport {
-    fn new(
-        handle: DeviceHandle<rusb::GlobalContext>,
-        interface: u8,
-        ep_in: u8,
-        ep_out: u8,
-    ) -> std::result::Result<Self, DeviceUnavalable> {
-        handle
-            .claim_interface(interface)
-            .map_err(|error| DeviceUnavalable {
-                device: handle.device(),
-                error,
-            })?;
-        Ok(Self {
-            handle,
-            ep_in,
-            ep_out,
-        })
+    pub fn handle(&self) -> &DeviceHandle<rusb::GlobalContext> {
+        &self.handle
     }
+}
 
-    /// Create a new transport from an exist device handle
-    pub fn from_usb_device(
-        handle: rusb::DeviceHandle<GlobalContext>,
-    ) -> std::result::Result<Self, DeviceUnavalable> {
-        let device = handle.device();
-        let desc = device
-            .device_descriptor()
-            .map_err(|error| DeviceUnavalable {
-                device: device.clone(),
-                error,
-            })?;
-        for c in 0..desc.num_configurations() {
-            let config = device
-                .config_descriptor(c)
-                .map_err(|error| DeviceUnavalable {
-                    device: device.clone(),
-                    error,
-                })?;
-            for i in config.interfaces() {
-                for i_desc in i.descriptors() {
-                    let output = i_desc.endpoint_descriptors().find(|e| {
-                        e.direction() == rusb::Direction::Out
-                            && e.transfer_type() == rusb::TransferType::Bulk
-                    });
-                    let input = i_desc.endpoint_descriptors().find(|e| {
-                        e.direction() == rusb::Direction::In
-                            && e.transfer_type() == rusb::TransferType::Bulk
-                    });
-
-                    if let (Some(input), Some(output)) = (input, output) {
-                        return Transport::new(
-                            handle,
-                            i_desc.setting_number(),
-                            input.address(),
-                            output.address(),
-                        );
-                    }
-                }
-            }
-        }
-        Err(DeviceUnavalable {
-            device,
-            error: rusb::Error::NotFound,
-        })
-    }
-
-    /// Create an IO object which implements [Read], [Write] and
-    /// [Seek]
-    pub fn io(&mut self) -> Result<TransportIO<&mut Self>> {
-        TransportIO::new(self)
-    }
-
-    /// Convert into an IO object which implements [Read], [Write] and
-    /// [Seek]
-    pub fn into_io(self) -> Result<TransportIO<Self>> {
-        TransportIO::new(self)
-    }
-
-    /// Get a reference to the underlying device handle
-    pub fn handle(&mut self) -> &mut DeviceHandle<GlobalContext> {
-        &mut self.handle
-    }
-
-    /// Get the bus number of the current device
-    pub fn bus_number(&self) -> u8 {
-        self.handle.device().bus_number()
-    }
-
-    /// Get the bus address of the current device
-    pub fn address(&self) -> u8 {
-        self.handle.device().address()
-    }
-
-    fn handle_operation<O, T>(&mut self, mut operation: O) -> Result<T>
+impl crate::device::Transport for Transport {
+    type TransportError = rusb::Error;
+    fn handle_operation<O, T>(&mut self, mut operation: O) -> crate::device::DeviceResult<T, Self>
     where
         O: OperationSteps<T>,
     {
@@ -212,54 +118,101 @@ impl Transport {
             }
         }
     }
+}
 
-    /// retrieve SoC flash identifier
-    pub fn flash_id(&mut self) -> Result<FlashId> {
-        self.handle_operation(crate::operation::flash_id())
+impl From<rusb::Error> for crate::device::Error<rusb::Error> {
+    fn from(value: rusb::Error) -> Self {
+        Self::UsbError(value)
+    }
+}
+
+pub type Device = crate::device::Device<Transport>;
+type Result<T> = crate::device::DeviceResult<T, Transport>;
+impl Device {
+    fn new_libusb(
+        handle: DeviceHandle<rusb::GlobalContext>,
+        interface: u8,
+        ep_in: u8,
+        ep_out: u8,
+    ) -> std::result::Result<Self, DeviceUnavalable> {
+        handle
+            .claim_interface(interface)
+            .map_err(|error| DeviceUnavalable {
+                device: handle.device(),
+                error,
+            })?;
+        Ok(Self::new(Transport {
+            handle,
+            ep_in,
+            ep_out,
+        }))
     }
 
-    /// retrieve SoC flash info
-    pub fn flash_info(&mut self) -> Result<FlashInfo> {
-        self.handle_operation(crate::operation::flash_info())
+    /// Create a new transport from an exist device handle
+    pub fn from_usb_device(
+        handle: rusb::DeviceHandle<GlobalContext>,
+    ) -> std::result::Result<Self, DeviceUnavalable> {
+        let device = handle.device();
+        let desc = device
+            .device_descriptor()
+            .map_err(|error| DeviceUnavalable {
+                device: device.clone(),
+                error,
+            })?;
+        for c in 0..desc.num_configurations() {
+            let config = device
+                .config_descriptor(c)
+                .map_err(|error| DeviceUnavalable {
+                    device: device.clone(),
+                    error,
+                })?;
+            for i in config.interfaces() {
+                for i_desc in i.descriptors() {
+                    let output = i_desc.endpoint_descriptors().find(|e| {
+                        e.direction() == rusb::Direction::Out
+                            && e.transfer_type() == rusb::TransferType::Bulk
+                    });
+                    let input = i_desc.endpoint_descriptors().find(|e| {
+                        e.direction() == rusb::Direction::In
+                            && e.transfer_type() == rusb::TransferType::Bulk
+                    });
+
+                    if let (Some(input), Some(output)) = (input, output) {
+                        return Self::new_libusb(
+                            handle,
+                            i_desc.setting_number(),
+                            input.address(),
+                            output.address(),
+                        );
+                    }
+                }
+            }
+        }
+        Err(DeviceUnavalable {
+            device,
+            error: rusb::Error::NotFound,
+        })
     }
 
-    /// retrieve SoC chip info
-    pub fn chip_info(&mut self) -> Result<ChipInfo> {
-        self.handle_operation(crate::operation::chip_info())
+    /// Create an IO object which implements [Read], [Write] and
+    /// [Seek]
+    pub fn io(&mut self) -> Result<TransportIO<&mut Self>> {
+        TransportIO::new(self)
     }
 
-    /// retrieve SoC capability
-    pub fn capability(&mut self) -> Result<Capability> {
-        self.handle_operation(crate::operation::capability())
+    /// Convert into an IO object which implements [Read], [Write] and
+    /// [Seek]
+    pub fn into_io(self) -> Result<TransportIO<Self>> {
+        TransportIO::new(self)
     }
 
-    /// read from the flash
-    ///
-    /// start_sector with [SECTOR_SIZE] sectors. the data to be read
-    /// must be a multiple of [SECTOR_SIZE] bytes
-    pub fn read_lba(&mut self, start_sector: u32, read: &mut [u8]) -> Result<u32> {
-        self.handle_operation(crate::operation::read_lba(start_sector, read))
-            .map(|t| t.into())
+    pub fn bus_number(&self) -> u8 {
+        self.transport().handle.device().bus_number()
     }
 
-    /// Create operation to read an lba from the flash
-    ///
-    /// start_sector based on [SECTOR_SIZE] sectors. the data to be
-    /// written must be a multiple of [SECTOR_SIZE] bytes
-    pub fn write_lba(&mut self, start_sector: u32, write: &[u8]) -> Result<u32> {
-        self.handle_operation(crate::operation::write_lba(start_sector, write))
-            .map(|t| t.into())
-    }
-
-    /// Write a specific area while in maskrom mode; typically 0x471 or 0x472 data as retrieved from a
-    /// rockchip boot file
-    pub fn write_maskrom_area(&mut self, area: u16, data: &[u8]) -> Result<()> {
-        self.handle_operation(crate::operation::write_area(area, data))
-    }
-
-    /// Reset the device
-    pub fn reset_device(&mut self, opcode: ResetOpcode) -> Result<()> {
-        self.handle_operation(crate::operation::reset_device(opcode))
+    /// Get the bus address of the current device
+    pub fn address(&self) -> u8 {
+        self.transport().handle.device().address()
     }
 }
 
@@ -276,7 +229,7 @@ pub struct TransportIO<T> {
 
 impl<T> TransportIO<T>
 where
-    T: BorrowMut<Transport>,
+    T: BorrowMut<Device>,
 {
     const MAXIO_SIZE: u64 = 128 * crate::protocol::SECTOR_SIZE;
     /// Create a new IO object around a given transport
@@ -292,7 +245,7 @@ where
     }
 
     /// Get a reference to the inner transport
-    pub fn inner(&mut self) -> &mut Transport {
+    pub fn inner(&mut self) -> &mut Device {
         self.transport.borrow_mut()
     }
 
@@ -410,7 +363,7 @@ enum BufferState {
 
 impl<T> Write for TransportIO<T>
 where
-    T: BorrowMut<Transport>,
+    T: BorrowMut<Device>,
 {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let r = match self.pre_io(buf.len() as u64)? {
@@ -434,7 +387,7 @@ where
 
 impl<T> Read for TransportIO<T>
 where
-    T: BorrowMut<Transport>,
+    T: BorrowMut<Device>,
 {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let r = match self.pre_io(buf.len() as u64)? {
@@ -451,7 +404,7 @@ where
 
 impl<T> Seek for TransportIO<T>
 where
-    T: BorrowMut<Transport>,
+    T: BorrowMut<Device>,
 {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         self.offset = match pos {
