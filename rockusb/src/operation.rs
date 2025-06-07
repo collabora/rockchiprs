@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use crate::protocol::{
     self, Capability, ChipInfo, CommandBlock, CommandStatus, CommandStatusParseError, Direction,
-    FlashId, FlashInfo, ResetOpcode
+    FlashId, FlashInfo, ResetOpcode,
 };
 use thiserror::Error;
 
