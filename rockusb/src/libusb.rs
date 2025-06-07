@@ -1,12 +1,8 @@
-use std::{
-    borrow::BorrowMut,
-    io::{Read, Seek, SeekFrom, Write},
-    time::Duration,
-};
+use std::time::Duration;
 
 use crate::{
+    device::DeviceIO,
     operation::{OperationSteps, UsbStep},
-    protocol::SECTOR_SIZE,
 };
 use rusb::{DeviceHandle, GlobalContext};
 use thiserror::Error;
@@ -196,14 +192,14 @@ impl Device {
 
     /// Create an IO object which implements [Read], [Write] and
     /// [Seek]
-    pub fn io(&mut self) -> Result<TransportIO<&mut Self>> {
-        TransportIO::new(self)
+    pub fn io(&mut self) -> Result<DeviceIO<&mut Self, Transport>> {
+        DeviceIO::new(self)
     }
 
     /// Convert into an IO object which implements [Read], [Write] and
     /// [Seek]
-    pub fn into_io(self) -> Result<TransportIO<Self>> {
-        TransportIO::new(self)
+    pub fn into_io(self) -> Result<DeviceIO<Self, Transport>> {
+        DeviceIO::new(self)
     }
 
     pub fn bus_number(&self) -> u8 {
@@ -213,220 +209,5 @@ impl Device {
     /// Get the bus address of the current device
     pub fn address(&self) -> u8 {
         self.transport().handle.device().address()
-    }
-}
-
-/// IO object which implements [Read], [Write] and [Seek]
-pub struct TransportIO<T> {
-    transport: T,
-    size: u64,
-    // Read/Write offset in bytes
-    offset: u64,
-    buffer: [u8; 512],
-    // Whether or not the buffer is dirty
-    state: BufferState,
-}
-
-impl<T> TransportIO<T>
-where
-    T: BorrowMut<Device>,
-{
-    const MAXIO_SIZE: u64 = 128 * crate::protocol::SECTOR_SIZE;
-    /// Create a new IO object around a given transport
-    pub fn new(mut transport: T) -> Result<Self> {
-        let info = transport.borrow_mut().flash_info()?;
-        Ok(Self {
-            transport,
-            size: info.size(),
-            offset: 0,
-            buffer: [0u8; 512],
-            state: BufferState::Invalid,
-        })
-    }
-
-    /// Get a reference to the inner transport
-    pub fn inner(&mut self) -> &mut Device {
-        self.transport.borrow_mut()
-    }
-
-    /// Convert into the inner transport
-    pub fn into_inner(self) -> T {
-        self.transport
-    }
-
-    /// Size of the flash in bytes
-    pub fn size(&self) -> u64 {
-        self.size
-    }
-
-    fn current_sector(&self) -> u64 {
-        self.offset / SECTOR_SIZE
-    }
-
-    // Want to start an i/o operation with a given maximum length
-    fn pre_io(&mut self, len: u64) -> std::result::Result<IOOperation, std::io::Error> {
-        if self.offset >= self.size {
-            return Ok(IOOperation::Eof);
-        }
-
-        // Offset inside the current sector
-        let sector_offset = self.offset % SECTOR_SIZE;
-        // bytes left from current position to end of current sector
-        let sector_remaining = SECTOR_SIZE - sector_offset;
-
-        // If the I/O operation is starting at a sector edge and encompasses at least one sector
-        // then direct I/O can be done
-        if sector_offset == 0 && len >= SECTOR_SIZE {
-            // At most read the amount of bytes left
-            let left = self.size - self.offset;
-            let io_len = len.min(left) / SECTOR_SIZE * SECTOR_SIZE;
-            Ok(IOOperation::Direct {
-                len: io_len.min(Self::MAXIO_SIZE) as usize,
-            })
-        } else {
-            if self.state == BufferState::Invalid {
-                let sector = self.current_sector() as u32;
-                self.transport
-                    .borrow_mut()
-                    .read_lba(sector, &mut self.buffer)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;
-                self.state = BufferState::Valid;
-            }
-            Ok(IOOperation::Buffered {
-                offset: sector_offset as usize,
-                len: len.min(sector_remaining) as usize,
-            })
-        }
-    }
-
-    fn post_io(&mut self, len: u64) -> std::result::Result<usize, std::io::Error> {
-        // Offset inside the current sector
-        let sector_offset = self.offset % SECTOR_SIZE;
-        // bytes left from current position to end of current sector
-        let sector_remaining = SECTOR_SIZE - sector_offset;
-
-        // If going over the sector edge flush the current buffer and invalidate it
-        if len >= sector_remaining {
-            self.flush_buffer()?;
-            self.state = BufferState::Invalid;
-        }
-        self.offset += len;
-        Ok(len as usize)
-    }
-
-    fn flush_buffer(&mut self) -> std::io::Result<()> {
-        if self.state == BufferState::Dirty {
-            let sector = self.current_sector() as u32;
-            self.transport
-                .borrow_mut()
-                .write_lba(sector, &self.buffer)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;
-            self.state = BufferState::Valid;
-        }
-        Ok(())
-    }
-
-    fn do_read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let sector = self.current_sector() as u32;
-        self.transport
-            .borrow_mut()
-            .read_lba(sector, buf)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;
-        Ok(buf.len())
-    }
-
-    fn do_write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let sector = self.current_sector() as u32;
-        self.transport
-            .borrow_mut()
-            .write_lba(sector, buf)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;
-        Ok(buf.len())
-    }
-}
-
-enum IOOperation {
-    Direct { len: usize },
-    Buffered { offset: usize, len: usize },
-    Eof,
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum BufferState {
-    // Buffer content doesn't match current offset
-    Invalid,
-    // Buffer content matches offset and device-side
-    Valid,
-    // Buffer content matches offset and has outstanding data
-    Dirty,
-}
-
-impl<T> Write for TransportIO<T>
-where
-    T: BorrowMut<Device>,
-{
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let r = match self.pre_io(buf.len() as u64)? {
-            IOOperation::Direct { len } => self.do_write(&buf[..len])?,
-            IOOperation::Buffered { offset, len } => {
-                self.buffer[offset..offset + len].copy_from_slice(&buf[0..len]);
-                self.state = BufferState::Dirty;
-                len
-            }
-            IOOperation::Eof => {
-                return Err(std::io::Error::other("Trying to write past end of area"));
-            }
-        };
-        self.post_io(r as u64)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.flush_buffer()
-    }
-}
-
-impl<T> Read for TransportIO<T>
-where
-    T: BorrowMut<Device>,
-{
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let r = match self.pre_io(buf.len() as u64)? {
-            IOOperation::Direct { len } => self.do_read(&mut buf[..len])?,
-            IOOperation::Buffered { offset, len } => {
-                buf[0..len].copy_from_slice(&self.buffer[offset..offset + len]);
-                len
-            }
-            IOOperation::Eof => 0,
-        };
-        self.post_io(r as u64)
-    }
-}
-
-impl<T> Seek for TransportIO<T>
-where
-    T: BorrowMut<Device>,
-{
-    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-        self.offset = match pos {
-            SeekFrom::Start(offset) => self.size.min(offset),
-            SeekFrom::End(offset) => {
-                if offset > 0 {
-                    self.size
-                } else {
-                    let offset = offset.unsigned_abs();
-                    self.size.saturating_sub(offset)
-                }
-            }
-            SeekFrom::Current(offset) => {
-                if offset > 0 {
-                    let offset = offset as u64;
-                    self.offset.saturating_add(offset).min(self.size)
-                } else {
-                    let offset = offset.unsigned_abs();
-                    self.offset.saturating_sub(offset)
-                }
-            }
-        };
-        Ok(self.offset)
     }
 }
