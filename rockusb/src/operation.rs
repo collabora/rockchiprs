@@ -218,8 +218,8 @@ impl<'a, T> UsbOperation<'a, T> {
 
     fn io_data_mut(&mut self) -> &mut [u8] {
         match &mut self.data {
-            IOBytes::Inband(ref mut data) => data,
-            IOBytes::Read(ref mut data) => data,
+            IOBytes::Inband(data) => data,
+            IOBytes::Read(data) => data,
             IOBytes::Write(_) => unreachable!(),
         }
     }

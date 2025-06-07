@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use bmap_parser::Bmap;
 use clap::{Parser, ValueEnum};
 use clap_num::maybe_hex;

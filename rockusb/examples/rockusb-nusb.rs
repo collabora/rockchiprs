@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_compression::futures::bufread::GzipDecoder;
 use bmap_parser::Bmap;
 use clap::{Parser, ValueEnum};

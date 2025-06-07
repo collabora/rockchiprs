@@ -424,7 +424,7 @@ where
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     "Trying to write past end of area",
-                ))
+                ));
             }
         };
         self.post_io(r as u64)

@@ -5,11 +5,11 @@ use crate::{
     operation::{OperationSteps, UsbStep},
     protocol::{ChipInfo, FlashId, FlashInfo, ResetOpcode, SECTOR_SIZE},
 };
-use futures::{future::BoxFuture, ready};
 use futures::{AsyncRead, AsyncSeek, AsyncWrite};
+use futures::{future::BoxFuture, ready};
 use nusb::{
-    transfer::{ControlOut, ControlType, Recipient, RequestBuffer},
     DeviceInfo,
+    transfer::{ControlOut, ControlType, Recipient, RequestBuffer},
 };
 use thiserror::Error;
 
@@ -132,7 +132,7 @@ impl Transport {
                     data,
                 } => {
                     let (control_type, recipient) = (
-                        match request_type >> 5 & 0x03 {
+                        match (request_type >> 5) & 0x03 {
                             0 => ControlType::Standard,
                             1 => ControlType::Class,
                             2 => ControlType::Vendor,
@@ -415,7 +415,7 @@ impl AsyncWrite for TransportIO {
                                         std::io::ErrorKind::Other,
                                         "Trying to write past end of area",
                                     )),
-                                )
+                                );
                             }
                         };
                         let r = inner.post_io(r as u64).await;
@@ -431,7 +431,7 @@ impl AsyncWrite for TransportIO {
                     return Poll::Ready(Err(std::io::Error::new(
                         std::io::ErrorKind::BrokenPipe,
                         "Invalid transport state",
-                    )))
+                    )));
                 }
             }
         }
@@ -460,7 +460,7 @@ impl AsyncWrite for TransportIO {
                     return Poll::Ready(Err(std::io::Error::new(
                         std::io::ErrorKind::BrokenPipe,
                         "Invalid transport state",
-                    )))
+                    )));
                 }
             }
         }
