@@ -46,8 +46,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [[example]]
 name="rockusb"
-required-features = ["libusb"]
+required-features = ["nusb"]
 
 [[example]]
-name="rockusb-nusb"
-required-features = ["nusb"]
+name="rockusb-libusb"
+required-features = ["libusb"]
