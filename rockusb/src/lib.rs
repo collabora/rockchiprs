@@ -1,6 +1,8 @@
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 #![doc = include_str!("../README.md")]
 
+/// Device wrapper over usb transports
+pub mod device;
 /// libusb transport implementation
 #[cfg(feature = "libusb")]
 pub mod libusb;
