@@ -3,10 +3,11 @@ use std::{borrow::BorrowMut, task::Poll};
 
 use crate::{
     operation::{OperationSteps, UsbStep},
-    protocol::{ChipInfo, FlashId, FlashInfo, ResetOpcode, SECTOR_SIZE},
+    protocol::SECTOR_SIZE,
 };
 use futures::{AsyncRead, AsyncSeek, AsyncWrite};
 use futures::{future::BoxFuture, ready};
+pub use nusb::transfer::TransferError;
 use nusb::{
     DeviceInfo,
     transfer::{ControlOut, ControlType, Recipient, RequestBuffer},
@@ -21,20 +22,15 @@ pub struct DeviceUnavalable {
     pub error: nusb::Error,
 }
 
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("Usb error: {0}")]
-    UsbError(#[from] nusb::Error),
-    #[error("Usb transfer error: {0}")]
-    UsbTransferError(#[from] nusb::transfer::TransferError),
-    #[error("Operation error: {0}")]
-    OperationError(#[from] crate::operation::UsbOperationError),
-}
-type Result<T> = std::result::Result<T, Error>;
-
 /// List rockchip devices
 pub fn devices() -> std::result::Result<impl Iterator<Item = DeviceInfo>, nusb::Error> {
     Ok(nusb::list_devices()?.filter(|d| d.vendor_id() == 0x2207))
+}
+
+impl From<TransferError> for crate::device::Error<TransferError> {
+    fn from(value: TransferError) -> Self {
+        Self::UsbError(value)
+    }
 }
 
 /// nusb based Transport for rockusb operation
@@ -44,64 +40,12 @@ pub struct Transport {
     ep_out: u8,
 }
 
-impl Transport {
-    fn new(
-        device: nusb::Device,
-        interface: u8,
-        ep_in: u8,
-        ep_out: u8,
-    ) -> std::result::Result<Self, DeviceUnavalable> {
-        let interface = device.claim_interface(interface)?;
-        Ok(Self {
-            interface,
-            ep_in,
-            ep_out,
-        })
-    }
-
-    /// Create a new transport from a device info
-    pub fn from_usb_device_info(
-        info: nusb::DeviceInfo,
-    ) -> std::result::Result<Self, DeviceUnavalable> {
-        let device = info.open()?;
-        Self::from_usb_device(device)
-    }
-
-    /// Create a new transport from an existing device
-    pub fn from_usb_device(device: nusb::Device) -> std::result::Result<Self, DeviceUnavalable> {
-        for config in device.clone().configurations() {
-            for interface in config.interface_alt_settings() {
-                let output = interface.endpoints().find(|e| {
-                    e.direction() == nusb::transfer::Direction::Out
-                        && e.transfer_type() == nusb::transfer::EndpointType::Bulk
-                });
-                let input = interface.endpoints().find(|e| {
-                    e.direction() == nusb::transfer::Direction::In
-                        && e.transfer_type() == nusb::transfer::EndpointType::Bulk
-                });
-
-                if let (Some(input), Some(output)) = (input, output) {
-                    return Transport::new(
-                        device,
-                        interface.interface_number(),
-                        input.address(),
-                        output.address(),
-                    );
-                }
-            }
-        }
-        Err(DeviceUnavalable {
-            error: nusb::Error::new(std::io::ErrorKind::NotFound, "Device not found"),
-        })
-    }
-
-    /// Convert into an IO object which implements [AsyncRead],
-    /// [AsyncWrite] and [AsyncSeek]
-    pub async fn into_io(self) -> Result<TransportIO> {
-        TransportIO::new(self).await
-    }
-
-    async fn handle_operation<O, T>(&mut self, mut operation: O) -> Result<T>
+impl crate::device::TransportAsync for Transport {
+    type TransportError = TransferError;
+    async fn handle_operation<O, T>(
+        &mut self,
+        mut operation: O,
+    ) -> crate::device::DeviceResultAsync<T, Self>
     where
         O: OperationSteps<T>,
     {
@@ -160,53 +104,66 @@ impl Transport {
             }
         }
     }
+}
 
-    /// retrieve SoC flash identifier
-    pub async fn flash_id(&mut self) -> Result<FlashId> {
-        self.handle_operation(crate::operation::flash_id()).await
+impl Transport {
+    fn new(
+        device: nusb::Device,
+        interface: u8,
+        ep_in: u8,
+        ep_out: u8,
+    ) -> std::result::Result<Self, DeviceUnavalable> {
+        let interface = device.claim_interface(interface)?;
+        Ok(Self {
+            interface,
+            ep_in,
+            ep_out,
+        })
+    }
+}
+
+pub type Device = crate::device::DeviceAsync<Transport>;
+type Result<T> = crate::device::DeviceResultAsync<T, Transport>;
+impl Device {
+    /// Create a new transport from a device info
+    pub fn from_usb_device_info(
+        info: nusb::DeviceInfo,
+    ) -> std::result::Result<Self, DeviceUnavalable> {
+        let device = info.open()?;
+        Self::from_usb_device(device)
     }
 
-    /// retrieve SoC flash info
-    pub async fn flash_info(&mut self) -> Result<FlashInfo> {
-        self.handle_operation(crate::operation::flash_info()).await
-    }
+    /// Create a new transport from an existing device
+    pub fn from_usb_device(device: nusb::Device) -> std::result::Result<Self, DeviceUnavalable> {
+        for config in device.clone().configurations() {
+            for interface in config.interface_alt_settings() {
+                let output = interface.endpoints().find(|e| {
+                    e.direction() == nusb::transfer::Direction::Out
+                        && e.transfer_type() == nusb::transfer::EndpointType::Bulk
+                });
+                let input = interface.endpoints().find(|e| {
+                    e.direction() == nusb::transfer::Direction::In
+                        && e.transfer_type() == nusb::transfer::EndpointType::Bulk
+                });
 
-    /// retrieve SoC chip info
-    pub async fn chip_info(&mut self) -> Result<ChipInfo> {
-        self.handle_operation(crate::operation::chip_info()).await
+                if let (Some(input), Some(output)) = (input, output) {
+                    return Ok(Device::new(Transport::new(
+                        device,
+                        interface.interface_number(),
+                        input.address(),
+                        output.address(),
+                    )?));
+                }
+            }
+        }
+        Err(DeviceUnavalable {
+            error: nusb::Error::new(std::io::ErrorKind::NotFound, "Device not found"),
+        })
     }
-
-    /// read from the flash
-    ///
-    /// start_sector with [SECTOR_SIZE] sectors. the data to be read
-    /// must be a multiple of [SECTOR_SIZE] bytes
-    pub async fn read_lba(&mut self, start_sector: u32, read: &mut [u8]) -> Result<u32> {
-        self.handle_operation(crate::operation::read_lba(start_sector, read))
-            .await
-            .map(|t| t.into())
-    }
-
-    /// Create operation to read an lba from the flash
-    ///
-    /// start_sector based on [SECTOR_SIZE] sectors. the data to be
-    /// written must be a multiple of [SECTOR_SIZE] bytes
-    pub async fn write_lba(&mut self, start_sector: u32, write: &[u8]) -> Result<u32> {
-        self.handle_operation(crate::operation::write_lba(start_sector, write))
-            .await
-            .map(|t| t.into())
-    }
-
-    /// Write a specific area while in maskrom mode; typically 0x471 or 0x472 data as retrieved from a
-    /// rockchip boot file
-    pub async fn write_maskrom_area(&mut self, area: u16, data: &[u8]) -> Result<()> {
-        self.handle_operation(crate::operation::write_area(area, data))
-            .await
-    }
-
-    /// Reset the device
-    pub async fn reset_device(&mut self, opcode: ResetOpcode) -> Result<()> {
-        self.handle_operation(crate::operation::reset_device(opcode))
-            .await
+    /// Convert into an IO object which implements [AsyncRead],
+    /// [AsyncWrite] and [AsyncSeek]
+    pub async fn into_io(self) -> Result<TransportIO> {
+        TransportIO::new(self).await
     }
 }
 
@@ -219,7 +176,7 @@ enum IoState {
 }
 
 struct TransportIOInner {
-    transport: Transport,
+    transport: Device,
     // Read/Write offset in bytes
     offset: u64,
     buffer: Box<[u8; 512]>,
@@ -237,7 +194,7 @@ pub struct TransportIO {
 
 impl TransportIO {
     /// Create a new IO object around a given transport
-    pub async fn new(mut transport: Transport) -> Result<Self> {
+    pub async fn new(mut transport: Device) -> Result<Self> {
         let info = transport.borrow_mut().flash_info().await?;
         let size = info.size();
         let inner = TransportIOInner {
@@ -256,7 +213,7 @@ impl TransportIO {
     // Convert into the inner transport
     //
     // Panics if the the TransportIO is currently executing I/O operations
-    pub fn into_inner(self) -> Transport {
+    pub fn into_inner(self) -> Device {
         let inner = match self.io_state {
             IoState::Idle(Some(i)) => i,
             _ => panic!("TransportIO is currently executing I/O operations"),
@@ -411,10 +368,7 @@ impl AsyncWrite for TransportIO {
                             IOOperation::Eof => {
                                 return (
                                     inner,
-                                    Err(std::io::Error::new(
-                                        std::io::ErrorKind::Other,
-                                        "Trying to write past end of area",
-                                    )),
+                                    Err(std::io::Error::other("Trying to write past end of area")),
                                 );
                             }
                         };

@@ -12,7 +12,8 @@ readme = "README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
 libusb = ["dep:rusb"]
-nusb = ["dep:nusb", "dep:futures"]
+nusb = ["dep:nusb", "async"]
+async = ["dep:futures"]
 
 [dependencies]
 bytes = "1.4.0"
@@ -23,6 +24,7 @@ thiserror = "2.0.7"
 rusb = { version = "0.9.4", optional = true }
 nusb = { version = "0.1.10", optional = true }
 futures = { version = "0.3.31", optional = true }
+maybe-async-cfg = "0.2.5"
 
 [dev-dependencies]
 anyhow = "1.0.69"

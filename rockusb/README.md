@@ -9,9 +9,9 @@ Printing chip info using libusb backend:
 ```rust,no_run
 # fn main() -> anyhow::Result<()> {
 let devices = rockusb::libusb::Devices::new()?;
-let mut transport = devices.iter().next()
+let mut device = devices.iter().next()
     .ok_or_else(|| anyhow::anyhow!("No Device found"))??;
-println!("Chip Info: {:0x?}", transport.chip_info()?);
+println!("Chip Info: {:0x?}", device.chip_info()?);
 Ok(())
 # }
 ```
@@ -23,8 +23,8 @@ Printing chip info using nusb backend:
 let mut devices = rockusb::nusb::devices()?;
 let info = devices.next()
     .ok_or_else(|| anyhow::anyhow!("No Device found"))?;
-let mut transport = rockusb::nusb::Transport::from_usb_device_info(info)?;
-println!("Chip Info: {:0x?}", transport.chip_info().await?);
+let mut device = rockusb::nusb::Device::from_usb_device_info(info)?;
+println!("Chip Info: {:0x?}", device.chip_info().await?);
 Ok(())
 # }
 ```
