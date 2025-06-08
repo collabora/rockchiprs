@@ -7,6 +7,7 @@ using libusb or nusb.
 
 Printing chip info using libusb backend:
 ```rust,no_run
+# #[cfg(feature = "libusb")] {
 # fn main() -> anyhow::Result<()> {
 let devices = rockusb::libusb::Devices::new()?;
 let mut device = devices.iter().next()
@@ -14,10 +15,12 @@ let mut device = devices.iter().next()
 println!("Chip Info: {:0x?}", device.chip_info()?);
 Ok(())
 # }
+# }
 ```
 
 Printing chip info using nusb backend:
 ```rust,no_run
+# #[cfg(feature = "nusb")] {
 # #[tokio::main]
 # async fn main() -> anyhow::Result<()> {
 let mut devices = rockusb::nusb::devices()?;
@@ -26,5 +29,6 @@ let info = devices.next()
 let mut device = rockusb::nusb::Device::from_usb_device_info(info)?;
 println!("Chip Info: {:0x?}", device.chip_info().await?);
 Ok(())
+# }
 # }
 ```
