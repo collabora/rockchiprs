@@ -1,9 +1,6 @@
 use std::time::Duration;
 
-use crate::{
-    device::DeviceIO,
-    operation::{OperationSteps, UsbStep},
-};
+use crate::operation::{OperationSteps, UsbStep};
 use rusb::{DeviceHandle, GlobalContext};
 use thiserror::Error;
 
@@ -188,18 +185,6 @@ impl Device {
             device,
             error: rusb::Error::NotFound,
         })
-    }
-
-    /// Create an IO object which implements [Read], [Write] and
-    /// [Seek]
-    pub fn io(&mut self) -> Result<DeviceIO<&mut Self, Transport>> {
-        DeviceIO::new(self)
-    }
-
-    /// Convert into an IO object which implements [Read], [Write] and
-    /// [Seek]
-    pub fn into_io(self) -> Result<DeviceIO<Self, Transport>> {
-        DeviceIO::new(self)
     }
 
     pub fn bus_number(&self) -> u8 {
