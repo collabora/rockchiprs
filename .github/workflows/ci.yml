@@ -39,6 +39,9 @@ jobs:
           toolchain: "1.86"
           components: clippy
       - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo clippy --all-targets --features=nusb -- -D warnings
+      - run: cargo clippy --all-targets --features=libusb -- -D warnings
+      - run: cargo clippy --all-targets --features=async -- -D warnings
 
   allgreen:
     if: always()
