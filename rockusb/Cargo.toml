@@ -8,6 +8,7 @@ description = "Rockchip usb protocol host implementation"
 homepage = "https://github.com/collabora/rockchiprs"
 repository = "https://github.com/collabora/rockchiprs"
 readme = "README.md"
+autoexamples = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
@@ -32,7 +33,6 @@ bmap-parser = "0.2.0"
 clap = { version = "4.2", features = ["derive"] }
 clap-num = "1.0"
 flate2 = "1.0.25"
-nbd = "0.3"
 rockfile = { path = "../rockfile", version = "0.1.2" }
 rusb = "0.9.1"
 tokio = { version = "1.40.0", features = ["full"] }
