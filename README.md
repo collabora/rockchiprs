@@ -7,3 +7,12 @@ distributed for early flashing.
 
 * [rockusb](rockusb/README.md) - A crate implementing the client side of the rockchip usb protocol
 * [rockfile](rockfile/README.md) - A crate implementing helpers for rockchip specific file formats
+
+## rockusb example tool
+
+The rockusb crate contains an example tool which can be installed directly from
+crates.io using cargo:
+
+```
+cargo install rockusb --example rockusb --features=nusb
+```
