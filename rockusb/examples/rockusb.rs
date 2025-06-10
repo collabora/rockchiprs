@@ -1,47 +1,42 @@
 mod common;
+
 use anyhow::{Result, anyhow};
 use clap::Parser;
-use common::ExampleDevice;
-use rockusb::libusb::DeviceUnavalable;
+use common::{Command, ExampleDeviceAsync, Opts};
+use rockusb::nusb::Device;
 
 fn list_available_devices() -> Result<()> {
-    let devices = rockusb::libusb::Devices::new()?;
-    println!("Available rockchip devices");
-    for d in devices.iter() {
-        match d {
-            Ok(d) => println!("* {:?}", d.transport().handle().device()),
-            Err(DeviceUnavalable { device, error }) => {
-                println!("* {:?} - Unavailable: {}", device, error)
-            }
-        }
+    let devices = rockusb::nusb::devices()?;
+    println!("Available rockchip devices:");
+    for d in devices {
+        println!(
+            "* Bus {} Device {} ID {}:{}",
+            d.bus_number(),
+            d.device_address(),
+            d.vendor_id(),
+            d.product_id()
+        );
     }
 
     Ok(())
 }
 
-fn main() -> Result<()> {
-    let opt = common::Opts::parse();
+#[tokio::main]
+async fn main() -> Result<()> {
+    let opt = Opts::parse();
 
     // Commands that don't talk a device
-    if matches!(opt.command, common::Command::List) {
+    if matches!(opt.command, Command::List) {
         return list_available_devices();
     }
 
-    let devices = rockusb::libusb::Devices::new()?;
-    let device = if let Some(dev) = opt.device {
+    let mut devices = rockusb::nusb::devices()?;
+    let info = if let Some(dev) = opt.device {
         devices
-            .iter()
-            .find(|d| match d {
-                Ok(device) => {
-                    device.bus_number() == dev.bus_number && device.address() == dev.address
-                }
-                Err(DeviceUnavalable { device, .. }) => {
-                    device.bus_number() == dev.bus_number && device.address() == dev.address
-                }
-            })
+            .find(|d| d.bus_number() == dev.bus_number && d.device_address() == dev.address)
             .ok_or_else(|| anyhow!("Specified device not found"))?
     } else {
-        let mut devices: Vec<_> = devices.iter().collect();
+        let mut devices: Vec<_> = devices.collect();
         match devices.len() {
             0 => Err(anyhow!("No devices found")),
             1 => Ok(devices.pop().unwrap()),
@@ -54,9 +49,9 @@ fn main() -> Result<()> {
                 ))
             }
         }?
-    }?;
+    };
 
-    let device = ExampleDevice::new(device);
-
-    opt.command.run(device)
+    let device = Device::from_usb_device_info(info)?;
+    let device = ExampleDeviceAsync::new(device);
+    opt.command.run_async(device).await
 }

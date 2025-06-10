@@ -292,12 +292,28 @@ where
 
         Ok(())
     }
+
+    pub async fn download_maskrom_area(&mut self, area: u16, path: &Path) -> Result<()> {
+        let data = std::fs::read(path)?;
+        self.device.write_maskrom_area(area, &data).await?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, clap::Parser)]
 pub enum Command {
+    /// List rockchip devices in rockusb mode
     List,
+    /// Download boot code from a rockfile (maskrom mode)
     DownloadBoot {
+        path: PathBuf,
+    },
+    /// Download code to sram area (maskrom mode)
+    DownloadSram {
+        path: PathBuf,
+    },
+    /// Download code to DDR area (maskrom mode)
+    DownloadDDR {
         path: PathBuf,
     },
     Read {
@@ -350,6 +366,8 @@ impl Command {
     {
         match self {
             Command::List => unreachable!(),
+            Command::DownloadSram { path } => device.download_maskrom_area(0x471, &path).await,
+            Command::DownloadDDR { path } => device.download_maskrom_area(0x472, &path).await,
             Command::DownloadBoot { path } => device.download_boot(&path).await,
             Command::Read {
                 offset,
