@@ -360,6 +360,14 @@ pub fn capability() -> UsbOperation<'static, Capability> {
     UsbOperation::new(CommandBlock::capability())
 }
 
+pub fn erase_lba(first: u32, count: u16) -> UsbOperation<'static, ()> {
+    UsbOperation::new(CommandBlock::erase_lba(first, count))
+}
+
+pub fn erase_force(first: u32, count: u16) -> UsbOperation<'static, ()> {
+    UsbOperation::new(CommandBlock::erase_force(first, count))
+}
+
 impl FromOperation for () {
     fn from_operation(_io: &[u8], _status: &CommandStatus) -> Result<Self, UsbOperationError>
     where

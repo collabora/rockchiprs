@@ -106,6 +106,20 @@ where
             .await
     }
 
+    /// erase specified blocks
+    pub async fn erase_lba(&mut self, first: u32, count: u16) -> DeviceResult<(), T> {
+        self.transport
+            .handle_operation(crate::operation::erase_lba(first, count))
+            .await
+    }
+
+    /// force erase specified blocks
+    pub async fn erase_force(&mut self, first: u32, count: u16) -> DeviceResult<(), T> {
+        self.transport
+            .handle_operation(crate::operation::erase_force(first, count))
+            .await
+    }
+
     /// read from the flash
     ///
     /// start_sector with [SECTOR_SIZE] sectors. the data to be read
