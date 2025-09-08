@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, ensure};
 use bmap_parser::Bmap;
 use clap::ValueEnum;
 use clap_num::maybe_hex;
@@ -128,6 +128,57 @@ where
 
         if capability.new_idb() {
             println!(" - New IDB");
+        }
+
+        Ok(())
+    }
+
+    pub async fn erase_flash(&mut self) -> Result<()> {
+        static MAX_DIRECT_ERASE: u32 = 1024;
+        static MAX_LBA_ERASE: u32 = 32 * 1024;
+
+        // Get flash info
+        let flash_info = self.device.flash_info().await?;
+
+        ensure!(flash_info.sectors() > 0, "Invalid flash chip");
+
+        // Get flash id
+        let flash_id = self.device.flash_id().await?;
+        let is_emmc = flash_id.to_str() == "EMMC ";
+
+        // Get flash capability
+        let capability = self.device.capability().await?;
+
+        let is_lba = capability.direct_lba();
+
+        let mut blocks_left = flash_info.sectors();
+        let mut first = 0;
+
+        /*
+         * Different types of memory need more or less time to erase blocks.
+         * Limit the number of blocks to avoid hitting the USB command
+         * timeout.
+         *
+         * rkdeveloptool uses those values too, as they are also useful to show erase
+         * progress.
+         */
+        let max_blocks = if is_emmc || is_lba {
+            MAX_LBA_ERASE
+        } else {
+            MAX_DIRECT_ERASE
+        };
+
+        while blocks_left > 0 {
+            let count = blocks_left.min(max_blocks);
+
+            if is_emmc || is_lba {
+                self.device.erase_lba(first, count as u16).await?;
+            } else {
+                self.device.erase_force(first, count as u16).await?;
+            }
+
+            blocks_left -= count;
+            first += count;
         }
 
         Ok(())
@@ -342,6 +393,7 @@ pub enum Command {
     FlashId,
     FlashInfo,
     Capability,
+    EraseFlash,
     ResetDevice {
         #[clap(value_enum, default_value_t=ArgResetOpcode::Reset)]
         opcode: ArgResetOpcode,
@@ -384,6 +436,7 @@ impl Command {
             Command::ChipInfo => device.read_chip_info().await,
             Command::FlashId => device.read_flash_id().await,
             Command::FlashInfo => device.read_flash_info().await,
+            Command::EraseFlash => device.erase_flash().await,
             Command::Capability => device.read_capability().await,
             Command::ResetDevice { opcode } => device.reset_device(opcode.into()).await,
         }
