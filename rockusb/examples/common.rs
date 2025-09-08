@@ -184,6 +184,17 @@ where
         Ok(())
     }
 
+    pub async fn read_storage(&mut self) -> Result<()> {
+        let storage = self.device.storage().await?;
+        println!("Raw Storage: {:0x?}", storage);
+        Ok(())
+    }
+
+    pub async fn change_storage(&mut self, target: u8) -> Result<()> {
+        self.device.change_storage(target).await?;
+        Ok(())
+    }
+
     pub async fn reset_device(&mut self, opcode: ResetOpcode) -> Result<()> {
         self.device.reset_device(opcode).await?;
         Ok(())
@@ -394,6 +405,10 @@ pub enum Command {
     FlashInfo,
     Capability,
     EraseFlash,
+    Storage,
+    ChangeStorage {
+        target: u8,
+    },
     ResetDevice {
         #[clap(value_enum, default_value_t=ArgResetOpcode::Reset)]
         opcode: ArgResetOpcode,
@@ -438,6 +453,8 @@ impl Command {
             Command::FlashInfo => device.read_flash_info().await,
             Command::EraseFlash => device.erase_flash().await,
             Command::Capability => device.read_capability().await,
+            Command::Storage => device.read_storage().await,
+            Command::ChangeStorage { target } => device.change_storage(target).await,
             Command::ResetDevice { opcode } => device.reset_device(opcode.into()).await,
         }
     }

@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     operation::OperationSteps,
-    protocol::{Capability, ChipInfo, FlashId, FlashInfo, ResetOpcode, SECTOR_SIZE},
+    protocol::{Capability, ChipInfo, FlashId, FlashInfo, ResetOpcode, SECTOR_SIZE, Storage},
 };
 
 #[cfg(feature = "async")]
@@ -117,6 +117,20 @@ where
     pub async fn erase_force(&mut self, first: u32, count: u16) -> DeviceResult<(), T> {
         self.transport
             .handle_operation(crate::operation::erase_force(first, count))
+            .await
+    }
+
+    /// retrieve current storage target
+    pub async fn storage(&mut self) -> DeviceResult<Storage, T> {
+        self.transport
+            .handle_operation(crate::operation::storage())
+            .await
+    }
+
+    /// set storage target
+    pub async fn change_storage(&mut self, target: u8) -> DeviceResult<(), T> {
+        self.transport
+            .handle_operation(crate::operation::change_storage(target))
             .await
     }
 
