@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use crate::protocol::{
     self, Capability, ChipInfo, CommandBlock, CommandStatus, CommandStatusParseError, Direction,
-    FlashId, FlashInfo, ResetOpcode,
+    FlashId, FlashInfo, ResetOpcode, Storage,
 };
 use thiserror::Error;
 
@@ -366,6 +366,28 @@ pub fn erase_lba(first: u32, count: u16) -> UsbOperation<'static, ()> {
 
 pub fn erase_force(first: u32, count: u16) -> UsbOperation<'static, ()> {
     UsbOperation::new(CommandBlock::erase_force(first, count))
+}
+
+impl FromOperation for Storage {
+    fn from_operation(io: &[u8], _status: &CommandStatus) -> Result<Self, UsbOperationError>
+    where
+        Self: Sized,
+    {
+        let data = io
+            .try_into()
+            .map_err(|_e| UsbOperationError::ReplyParseFailure)?;
+        Ok(Storage::from_bytes(data))
+    }
+}
+
+/// Read current storage target
+pub fn storage() -> UsbOperation<'static, Storage> {
+    UsbOperation::new(CommandBlock::storage())
+}
+
+/// Read current storage target
+pub fn change_storage(target: u8) -> UsbOperation<'static, ()> {
+    UsbOperation::new(CommandBlock::change_storage(target))
 }
 
 impl FromOperation for () {
