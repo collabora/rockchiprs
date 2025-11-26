@@ -11,7 +11,7 @@ fn list_available_devices() -> Result<()> {
     for d in devices {
         println!(
             "* Bus {} Device {} ID {}:{}",
-            d.bus_number(),
+            d.busnum(),
             d.device_address(),
             d.vendor_id(),
             d.product_id()
@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
     let mut devices = rockusb::nusb::devices()?;
     let info = if let Some(dev) = opt.device {
         devices
-            .find(|d| d.bus_number() == dev.bus_number && d.device_address() == dev.address)
+            .find(|d| d.busnum() == dev.bus_number && d.device_address() == dev.address)
             .ok_or_else(|| anyhow!("Specified device not found"))?
     } else {
         let mut devices: Vec<_> = devices.collect();
