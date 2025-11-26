@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::operation::{OperationSteps, UsbStep};
 pub use nusb::transfer::TransferError;
 use nusb::{
-    DeviceInfo, MaybeFuture,
+    DeviceInfo,
     transfer::{Bulk, Buffer, ControlOut, ControlType, In, Out, Recipient},
 };
 use thiserror::Error;
@@ -25,8 +25,8 @@ impl DeviceUnavalable {
 }
 
 /// List rockchip devices
-pub fn devices() -> std::result::Result<impl Iterator<Item = DeviceInfo>, nusb::Error> {
-    Ok(nusb::list_devices().wait()?.filter(|d| d.vendor_id() == 0x2207))
+pub async fn devices() -> std::result::Result<impl Iterator<Item = DeviceInfo>, nusb::Error> {
+    Ok(nusb::list_devices().await?.filter(|d| d.vendor_id() == 0x2207))
 }
 
 impl From<TransferError> for crate::device::Error<TransferError> {
@@ -66,7 +66,7 @@ impl crate::device::TransportAsync for Transport {
                 UsbStep::ReadBulk { data } => {
                     // For IN transfers, requested_len must be a multiple of max_packet_size
                     let max_packet_size = self.ep_in.max_packet_size();
-                    let requested_len = ((data.len() + max_packet_size - 1) / max_packet_size) * max_packet_size;
+                    let requested_len = data.len().next_multiple_of(max_packet_size);
                     let buf = Buffer::new(requested_len);
                     self.ep_in.submit(buf);
                     let completion = self.ep_in.next_complete().await;
@@ -129,15 +129,15 @@ impl Transport {
 pub type Device = crate::device::DeviceAsync<Transport>;
 impl Device {
     /// Create a new transport from a device info
-    pub fn from_usb_device_info(
+    pub async fn from_usb_device_info(
         info: nusb::DeviceInfo,
     ) -> std::result::Result<Self, DeviceUnavalable> {
-        let device = info.open().wait()?;
-        Self::from_usb_device(device)
+        let device = info.open().await?;
+        Self::from_usb_device(device).await
     }
 
     /// Create a new transport from an existing device
-    pub fn from_usb_device(device: nusb::Device) -> std::result::Result<Self, DeviceUnavalable> {
+    pub async fn from_usb_device(device: nusb::Device) -> std::result::Result<Self, DeviceUnavalable> {
         for config in device.clone().configurations() {
             for iface_setting in config.interface_alt_settings() {
                 let output = iface_setting.endpoints().find(|e| {
@@ -150,7 +150,7 @@ impl Device {
                 });
 
                 if let (Some(input), Some(output)) = (input, output) {
-                    let interface = device.claim_interface(iface_setting.interface_number()).wait()?;
+                    let interface = device.claim_interface(iface_setting.interface_number()).await?;
                     let ep_in = interface.endpoint::<Bulk, In>(input.address())?;
                     let ep_out = interface.endpoint::<Bulk, Out>(output.address())?;
                     return Ok(Device::new(Transport::new(interface, ep_in, ep_out)));

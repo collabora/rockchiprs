@@ -5,8 +5,8 @@ use clap::Parser;
 use common::{Command, ExampleDeviceAsync, Opts};
 use rockusb::nusb::Device;
 
-fn list_available_devices() -> Result<()> {
-    let devices = rockusb::nusb::devices()?;
+async fn list_available_devices() -> Result<()> {
+    let devices = rockusb::nusb::devices().await?;
     println!("Available rockchip devices:");
     for d in devices {
         println!(
@@ -27,10 +27,10 @@ async fn main() -> Result<()> {
 
     // Commands that don't talk a device
     if matches!(opt.command, Command::List) {
-        return list_available_devices();
+        return list_available_devices().await;
     }
 
-    let mut devices = rockusb::nusb::devices()?;
+    let mut devices = rockusb::nusb::devices().await?;
     let info = if let Some(dev) = opt.device {
         devices
             .find(|d| d.busnum() == dev.bus_number && d.device_address() == dev.address)
@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
             1 => Ok(devices.pop().unwrap()),
             _ => {
                 drop(devices);
-                let _ = list_available_devices();
+                let _ = list_available_devices().await;
                 println!();
                 Err(anyhow!(
                     "Please select a specific device using the -d option"
@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
         }?
     };
 
-    let device = Device::from_usb_device_info(info)?;
+    let device = Device::from_usb_device_info(info).await?;
     let device = ExampleDeviceAsync::new(device);
     opt.command.run_async(device).await
 }
