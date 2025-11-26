@@ -4,7 +4,7 @@ use crate::operation::{OperationSteps, UsbStep};
 pub use nusb::transfer::TransferError;
 use nusb::{
     DeviceInfo,
-    transfer::{Bulk, Buffer, ControlOut, ControlType, In, Out, Recipient},
+    transfer::{Buffer, Bulk, ControlOut, ControlType, In, Out, Recipient},
 };
 use thiserror::Error;
 
@@ -26,7 +26,9 @@ impl DeviceUnavalable {
 
 /// List rockchip devices
 pub async fn devices() -> std::result::Result<impl Iterator<Item = DeviceInfo>, nusb::Error> {
-    Ok(nusb::list_devices().await?.filter(|d| d.vendor_id() == 0x2207))
+    Ok(nusb::list_devices()
+        .await?
+        .filter(|d| d.vendor_id() == 0x2207))
 }
 
 impl From<TransferError> for crate::device::Error<TransferError> {
@@ -137,7 +139,9 @@ impl Device {
     }
 
     /// Create a new transport from an existing device
-    pub async fn from_usb_device(device: nusb::Device) -> std::result::Result<Self, DeviceUnavalable> {
+    pub async fn from_usb_device(
+        device: nusb::Device,
+    ) -> std::result::Result<Self, DeviceUnavalable> {
         for config in device.clone().configurations() {
             for iface_setting in config.interface_alt_settings() {
                 let output = iface_setting.endpoints().find(|e| {
@@ -150,7 +154,9 @@ impl Device {
                 });
 
                 if let (Some(input), Some(output)) = (input, output) {
-                    let interface = device.claim_interface(iface_setting.interface_number()).await?;
+                    let interface = device
+                        .claim_interface(iface_setting.interface_number())
+                        .await?;
                     let ep_in = interface.endpoint::<Bulk, In>(input.address())?;
                     let ep_out = interface.endpoint::<Bulk, Out>(output.address())?;
                     return Ok(Device::new(Transport::new(interface, ep_in, ep_out)));
