@@ -1,22 +1,32 @@
+use std::time::Duration;
+
 use crate::operation::{OperationSteps, UsbStep};
 pub use nusb::transfer::TransferError;
 use nusb::{
-    DeviceInfo,
-    transfer::{ControlOut, ControlType, Recipient, RequestBuffer},
+    DeviceInfo, MaybeFuture,
+    transfer::{Bulk, Buffer, ControlOut, ControlType, In, Out, Recipient},
 };
 use thiserror::Error;
 
 /// Error indicate a device is not available
 #[derive(Debug, Error)]
-#[error("Device is not available: {error}")]
-pub struct DeviceUnavalable {
-    #[from]
-    pub error: nusb::Error,
+pub enum DeviceUnavalable {
+    #[error("Device is not available: {0}")]
+    UsbError(#[from] nusb::Error),
+    #[error("Device not found")]
+    NotFound,
+}
+
+impl DeviceUnavalable {
+    /// Create a "not found" error
+    pub fn not_found() -> Self {
+        DeviceUnavalable::NotFound
+    }
 }
 
 /// List rockchip devices
 pub fn devices() -> std::result::Result<impl Iterator<Item = DeviceInfo>, nusb::Error> {
-    Ok(nusb::list_devices()?.filter(|d| d.vendor_id() == 0x2207))
+    Ok(nusb::list_devices().wait()?.filter(|d| d.vendor_id() == 0x2207))
 }
 
 impl From<TransferError> for crate::device::Error<TransferError> {
@@ -28,8 +38,8 @@ impl From<TransferError> for crate::device::Error<TransferError> {
 /// nusb based Transport for rockusb operation
 pub struct Transport {
     interface: nusb::Interface,
-    ep_in: u8,
-    ep_out: u8,
+    ep_in: nusb::Endpoint<Bulk, In>,
+    ep_out: nusb::Endpoint<Bulk, Out>,
 }
 
 impl crate::device::TransportAsync for Transport {
@@ -41,24 +51,27 @@ impl crate::device::TransportAsync for Transport {
     where
         O: OperationSteps<T>,
     {
+        // Default timeout for USB operations
+        const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
+
         loop {
             let step = operation.step();
             match step {
                 UsbStep::WriteBulk { data } => {
-                    let _written = self
-                        .interface
-                        .bulk_out(self.ep_out, data.to_vec())
-                        .await
-                        .into_result()?;
+                    let buf: Buffer = data.to_vec().into();
+                    self.ep_out.submit(buf);
+                    let completion = self.ep_out.next_complete().await;
+                    completion.into_result()?;
                 }
                 UsbStep::ReadBulk { data } => {
-                    let req = RequestBuffer::new(data.len());
-                    let read = self
-                        .interface
-                        .bulk_in(self.ep_in, req)
-                        .await
-                        .into_result()?;
-                    data.copy_from_slice(&read);
+                    // For IN transfers, requested_len must be a multiple of max_packet_size
+                    let max_packet_size = self.ep_in.max_packet_size();
+                    let requested_len = ((data.len() + max_packet_size - 1) / max_packet_size) * max_packet_size;
+                    let buf = Buffer::new(requested_len);
+                    self.ep_in.submit(buf);
+                    let completion = self.ep_in.next_complete().await;
+                    let result_buf = completion.into_result()?;
+                    data.copy_from_slice(&result_buf[..data.len()]);
                 }
                 UsbStep::WriteControl {
                     request_type,
@@ -90,7 +103,7 @@ impl crate::device::TransportAsync for Transport {
                         index,
                         data,
                     };
-                    self.interface.control_out(data).await.into_result()?;
+                    self.interface.control_out(data, DEFAULT_TIMEOUT).await?;
                 }
                 UsbStep::Finished(r) => break r.map_err(|e| e.into()),
             }
@@ -100,17 +113,15 @@ impl crate::device::TransportAsync for Transport {
 
 impl Transport {
     fn new(
-        device: nusb::Device,
-        interface: u8,
-        ep_in: u8,
-        ep_out: u8,
-    ) -> std::result::Result<Self, DeviceUnavalable> {
-        let interface = device.claim_interface(interface)?;
-        Ok(Self {
+        interface: nusb::Interface,
+        ep_in: nusb::Endpoint<Bulk, In>,
+        ep_out: nusb::Endpoint<Bulk, Out>,
+    ) -> Self {
+        Self {
             interface,
             ep_in,
             ep_out,
-        })
+        }
     }
 }
 
@@ -120,35 +131,31 @@ impl Device {
     pub fn from_usb_device_info(
         info: nusb::DeviceInfo,
     ) -> std::result::Result<Self, DeviceUnavalable> {
-        let device = info.open()?;
+        let device = info.open().wait()?;
         Self::from_usb_device(device)
     }
 
     /// Create a new transport from an existing device
     pub fn from_usb_device(device: nusb::Device) -> std::result::Result<Self, DeviceUnavalable> {
         for config in device.clone().configurations() {
-            for interface in config.interface_alt_settings() {
-                let output = interface.endpoints().find(|e| {
+            for iface_setting in config.interface_alt_settings() {
+                let output = iface_setting.endpoints().find(|e| {
                     e.direction() == nusb::transfer::Direction::Out
-                        && e.transfer_type() == nusb::transfer::EndpointType::Bulk
+                        && e.transfer_type() == nusb::descriptors::TransferType::Bulk
                 });
-                let input = interface.endpoints().find(|e| {
+                let input = iface_setting.endpoints().find(|e| {
                     e.direction() == nusb::transfer::Direction::In
-                        && e.transfer_type() == nusb::transfer::EndpointType::Bulk
+                        && e.transfer_type() == nusb::descriptors::TransferType::Bulk
                 });
 
                 if let (Some(input), Some(output)) = (input, output) {
-                    return Ok(Device::new(Transport::new(
-                        device,
-                        interface.interface_number(),
-                        input.address(),
-                        output.address(),
-                    )?));
+                    let interface = device.claim_interface(iface_setting.interface_number()).wait()?;
+                    let ep_in = interface.endpoint::<Bulk, In>(input.address())?;
+                    let ep_out = interface.endpoint::<Bulk, Out>(output.address())?;
+                    return Ok(Device::new(Transport::new(interface, ep_in, ep_out)));
                 }
             }
         }
-        Err(DeviceUnavalable {
-            error: nusb::Error::new(std::io::ErrorKind::NotFound, "Device not found"),
-        })
+        Err(DeviceUnavalable::not_found())
     }
 }
