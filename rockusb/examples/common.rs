@@ -12,6 +12,7 @@ use bmap_parser::Bmap;
 use clap::ValueEnum;
 use clap_num::maybe_hex;
 use flate2::read::GzDecoder;
+use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 use rockfile::boot::{
     RkBootEntry, RkBootEntryBytes, RkBootHeader, RkBootHeaderBytes, RkBootHeaderEntry,
 };
@@ -27,7 +28,19 @@ use rockusb::device::{DeviceAsync, TransportAsync};
 #[cfg(feature = "async")]
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 #[cfg(feature = "async")]
-use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
+use tokio_util::compat::{
+    FuturesAsyncReadCompatExt, FuturesAsyncWriteCompatExt, TokioAsyncReadCompatExt,
+    TokioAsyncWriteCompatExt,
+};
+
+fn setup_progress_bar(bmap: &Bmap) -> ProgressBar {
+    let pb = ProgressBar::new(bmap.total_mapped_size());
+    pb.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+        .unwrap()
+        .with_key("eta", |state: &ProgressState, w: &mut dyn std::fmt::Write | write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
+        .progress_chars("#>-"));
+    pb
+}
 
 fn find_bmap(img: &Path) -> Option<PathBuf> {
     fn append(path: PathBuf) -> PathBuf {
@@ -247,9 +260,11 @@ where
         let mut xml = String::new();
         bmap_file.read_to_string(&mut xml)?;
         let bmap = Bmap::from_xml(&xml)?;
+        let pb = setup_progress_bar(&bmap);
 
         // HACK to minimize small writes
-        let mut writer = BufWriter::with_capacity(16 * 1024 * 1024, self.device.into_io()?);
+        let io = self.device.into_io()?;
+        let mut writer = BufWriter::with_capacity(16 * 1024 * 1024, pb.wrap_write(io));
 
         let mut file = File::open(path)?;
         match path.extension().and_then(OsStr::to_str) {
@@ -262,6 +277,7 @@ where
                 bmap_parser::copy(&mut file, &mut writer, &bmap)?;
             }
         }
+        pb.finish_and_clear();
 
         Ok(())
     }
@@ -275,10 +291,13 @@ where
         let mut xml = String::new();
         bmap_file.read_to_string(&mut xml).await?;
         let bmap = Bmap::from_xml(&xml)?;
+        let pb = setup_progress_bar(&bmap);
 
         // HACK to minimize small writes
+        let io = self.device.into_io().await?;
+        let pb_writer = pb.wrap_async_write(io.compat_write());
         let mut writer =
-            futures::io::BufWriter::with_capacity(16 * 1024 * 1024, self.device.into_io().await?);
+            futures::io::BufWriter::with_capacity(16 * 1024 * 1024, pb_writer.compat_write());
 
         let file = tokio::fs::File::open(path).await?;
         let mut file = futures::io::BufReader::with_capacity(16 * 1024 * 1024, file.compat());
@@ -292,6 +311,8 @@ where
                 bmap_parser::copy_async(&mut file, &mut writer, &bmap).await?;
             }
         }
+        pb.finish_and_clear();
+
         Ok(())
     }
 

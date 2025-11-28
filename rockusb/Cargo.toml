@@ -26,6 +26,7 @@ rusb = { version = "0.9.4", optional = true }
 nusb = { version = "0.1.10", optional = true }
 futures = { version = "0.3.31", optional = true }
 maybe-async-cfg = "0.2.5"
+indicatif = { version = "0.18.2", features = ["tokio"] }
 
 [dev-dependencies]
 anyhow = "1.0.69"
