@@ -39,6 +39,8 @@ enum CommandCode {
     WriteNewEfuse = 0x23,
     ReadNewEfuse = 0x24,
     EraseLBA = 0x25,
+    ChangeStorage = 0x2A,
+    ReadStorage = 0x2B,
     ReadCapability = 0xAA,
     DeviceReset = 0xFF,
 }
@@ -223,6 +225,14 @@ impl Capability {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Storage([u8; 4]);
+impl Storage {
+    pub fn from_bytes(data: [u8; 4]) -> Self {
+        Storage(data)
+    }
+}
+
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum CommandBlockParseError {
     #[error("Invalid Command block signature: {0:x?}")]
@@ -383,6 +393,34 @@ impl CommandBlock {
         }
     }
 
+    pub fn storage() -> CommandBlock {
+        CommandBlock {
+            tag: fastrand::u32(..),
+            transfer_length: 4,
+            flags: Direction::In,
+            lun: 0,
+            cdb_length: 0x6,
+            cd_code: CommandCode::ReadStorage,
+            cd_opcode: 0,
+            cd_address: 0,
+            cd_length: 0,
+        }
+    }
+
+    pub fn change_storage(target: u8) -> CommandBlock {
+        CommandBlock {
+            tag: fastrand::u32(..),
+            transfer_length: 0,
+            flags: Direction::Out,
+            lun: 0,
+            cdb_length: 0x6,
+            cd_code: CommandCode::ChangeStorage,
+            cd_opcode: target,
+            cd_address: 0,
+            cd_length: 0,
+        }
+    }
+
     pub fn tag(&self) -> u32 {
         self.tag
     }
@@ -444,6 +482,7 @@ impl CommandBlock {
         })
     }
 }
+
 #[cfg(test)]
 mod test {
     use super::*;
