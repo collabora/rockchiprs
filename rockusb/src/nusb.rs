@@ -1,12 +1,13 @@
 use std::time::Duration;
 
-use crate::operation::{OperationSteps, UsbStep};
+use crate::{maybe_send::MaybeSend, operation::{OperationSteps, UsbStep}};
 pub use nusb::transfer::TransferError;
 use nusb::{
     DeviceInfo,
     transfer::{Buffer, Bulk, ControlOut, ControlType, In, Out, Recipient},
 };
 use thiserror::Error;
+
 
 /// Error indicate a device is not available
 #[derive(Debug, Error)]
@@ -51,7 +52,8 @@ impl crate::device::TransportAsync for Transport {
         mut operation: O,
     ) -> crate::device::DeviceResultAsync<T, Self>
     where
-        O: OperationSteps<T>,
+        O: OperationSteps<T> + MaybeSend,
+        T: MaybeSend,
     {
         // Default timeout for USB operations
         const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);

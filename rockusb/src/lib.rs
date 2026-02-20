@@ -3,6 +3,8 @@
 
 /// Device wrapper over usb transports
 pub mod device;
+/// Conditional Send bounds for async code
+pub mod maybe_send;
 /// libusb transport implementation
 #[cfg(feature = "libusb")]
 pub mod libusb;
