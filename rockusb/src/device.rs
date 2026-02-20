@@ -11,9 +11,12 @@ use crate::{
     protocol::{Capability, ChipInfo, FlashId, FlashInfo, ResetOpcode, SECTOR_SIZE},
 };
 
-#[cfg(feature = "async")]
-use futures::{AsyncRead, AsyncSeek, AsyncWrite, future::BoxFuture, ready};
 use thiserror::Error;
+#[cfg(feature = "async")]
+use {
+    crate::maybe_send::{BoxFuture, MaybeSend},
+    futures::{AsyncRead, AsyncSeek, AsyncWrite, ready},
+};
 
 #[derive(Debug, Clone, Eq, PartialEq, Error)]
 /// Error type return by most [Device] method
@@ -42,10 +45,10 @@ pub trait Transport {
     fn handle_operation<O, T>(
         &mut self,
         operation: O,
-    ) -> impl Future<Output = Result<T, Error<Self::TransportError>>> + Send
+    ) -> impl Future<Output = Result<T, Error<Self::TransportError>>> + MaybeSend
     where
-        O: OperationSteps<T> + Send,
-        T: Send;
+        O: OperationSteps<T> + MaybeSend,
+        T: MaybeSend;
 }
 
 /// Result type return by most [Device] method
@@ -482,7 +485,7 @@ where
 #[cfg(feature = "async")]
 impl<T> AsyncWrite for DeviceIOAsync<DeviceAsync<T>, T>
 where
-    T: TransportAsync + Unpin + Send + 'static,
+    T: TransportAsync + Unpin + MaybeSend + 'static,
 {
     fn poll_write(
         self: std::pin::Pin<&mut Self>,
@@ -555,7 +558,7 @@ where
 #[cfg(feature = "async")]
 impl<T> AsyncRead for DeviceIOAsync<DeviceAsync<T>, T>
 where
-    T: TransportAsync + Unpin + Send + 'static,
+    T: TransportAsync + Unpin + MaybeSend + 'static,
 {
     fn poll_read(
         self: std::pin::Pin<&mut Self>,
