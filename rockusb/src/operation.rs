@@ -57,7 +57,7 @@ pub enum UsbStep<'a, T> {
 /// steps to take to finish an operation
 pub trait OperationSteps<T> {
     /// Next step to execute by a transport
-    fn step(&mut self) -> UsbStep<T>;
+    fn step(&mut self) -> UsbStep<'_, T>;
 }
 
 enum MaskRomSteps {
@@ -89,7 +89,7 @@ impl<'a> MaskRomOperation<'a> {
 }
 
 impl OperationSteps<()> for MaskRomOperation<'_> {
-    fn step(&mut self) -> UsbStep<()> {
+    fn step(&mut self) -> UsbStep<'_, ()> {
         let mut current = MaskRomSteps::Done;
         std::mem::swap(&mut self.steps, &mut current);
         match current {
@@ -152,7 +152,7 @@ impl OperationSteps<()> for MaskRomOperation<'_> {
 }
 
 /// Write a specific area; typically 0x471 or 0x472 data as retrieved from a rockchip boot file
-pub fn write_area(area: u16, data: &[u8]) -> MaskRomOperation {
+pub fn write_area(area: u16, data: &[u8]) -> MaskRomOperation<'_> {
     MaskRomOperation::new(area, data)
 }
 
@@ -238,7 +238,7 @@ where
     T: FromOperation,
     T: std::fmt::Debug,
 {
-    fn step(&mut self) -> UsbStep<T> {
+    fn step(&mut self) -> UsbStep<'_, T> {
         let mut next = Operation::CommandBlock;
         std::mem::swap(&mut self.next, &mut next);
         match next {
