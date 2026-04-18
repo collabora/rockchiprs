@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use crate::protocol::{
     self, Capability, ChipInfo, CommandBlock, CommandStatus, CommandStatusParseError, Direction,
-    FlashId, FlashInfo, ResetOpcode,
+    FlashId, FlashInfo, ResetOpcode, StorageIndex,
 };
 use thiserror::Error;
 
@@ -380,6 +380,35 @@ impl FromOperation for () {
 /// Create operation to reset the SoC
 pub fn reset_device(opcode: ResetOpcode) -> UsbOperation<'static, ()> {
     UsbOperation::new(CommandBlock::reset_device(opcode))
+}
+
+impl FromOperation for StorageIndex {
+    fn from_operation(io: &[u8], _status: &CommandStatus) -> Result<Self, UsbOperationError>
+    where
+        Self: Sized,
+    {
+        let data: [u8; 4] = io
+            .try_into()
+            .map_err(|_e| UsbOperationError::ReplyParseFailure)?;
+        let data = u32::from_le_bytes(data);
+        // index is one-hot, bit index corresponds to storage index
+        if data.count_ones() != 1 {
+            return Err(UsbOperationError::ReplyParseFailure);
+        }
+        let index = StorageIndex::try_from(data.trailing_zeros() as u8)
+            .map_err(|_e| UsbOperationError::ReplyParseFailure)?;
+        Ok(index)
+    }
+}
+
+/// Create operation to switch the active storage device
+pub fn switch_storage(index: StorageIndex) -> UsbOperation<'static, ()> {
+    UsbOperation::new(CommandBlock::switch_storage(index))
+}
+
+/// Create operation to query the current storage media type
+pub fn get_storage() -> UsbOperation<'static, StorageIndex> {
+    UsbOperation::new(CommandBlock::get_storage())
 }
 
 /// Bytes transferred

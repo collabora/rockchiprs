@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::{Result, anyhow, ensure};
 use bmap_parser::Bmap;
-use clap::ValueEnum;
+use clap::{Arg, ValueEnum};
 use clap_num::maybe_hex;
 use flate2::read::GzDecoder;
 use rockfile::boot::{
@@ -17,7 +17,7 @@ use rockfile::boot::{
 };
 use rockusb::{
     device::{Device, Transport},
-    protocol::ResetOpcode,
+    protocol::{ResetOpcode, StorageIndex},
 };
 
 #[cfg(feature = "async")]
@@ -130,6 +130,10 @@ where
             println!(" - New IDB");
         }
 
+        if capability.switch_storage() {
+            println!(" - Switch storage");
+        }
+
         Ok(())
     }
 
@@ -186,6 +190,31 @@ where
 
     pub async fn reset_device(&mut self, opcode: ResetOpcode) -> Result<()> {
         self.device.reset_device(opcode).await?;
+        Ok(())
+    }
+
+    pub async fn switch_storage(&mut self, index: ArgStorageIndex) -> Result<()> {
+        let index_device = StorageIndex::from(index);
+        self.device.switch_storage(index_device).await?;
+        // Rockchip protocol does not provide a way to get return code from
+        // the "rkusb_do_switch_storage" function, so we can only check again
+        let new_index = self.device.get_storage().await?;
+        if new_index == index_device {
+            println!("Switched storage to {}", index);
+        } else {
+            println!(
+                "Failed to switch storage to {}, current storage is {}",
+                index,
+                ArgStorageIndex::from(new_index)
+            );
+        }
+        Ok(())
+    }
+
+    pub async fn get_storage(&mut self) -> Result<()> {
+        let media = self.device.get_storage().await?;
+        let media_clap = ArgStorageIndex::from(media);
+        println!("Storage media: {}", media_clap);
         Ok(())
     }
 
@@ -408,6 +437,13 @@ pub enum Command {
         #[clap(value_enum, default_value_t=ArgResetOpcode::Reset)]
         opcode: ArgResetOpcode,
     },
+    /// Switch to a different storage device
+    SwitchStorage {
+        #[clap(value_enum)]
+        storage: ArgStorageIndex,
+    },
+    /// Query the current storage type
+    GetStorage,
 }
 
 impl Command {
@@ -449,6 +485,8 @@ impl Command {
             Command::EraseFlash => device.erase_flash().await,
             Command::Capability => device.read_capability().await,
             Command::ResetDevice { opcode } => device.reset_device(opcode.into()).await,
+            Command::SwitchStorage { storage } => device.switch_storage(storage).await,
+            Command::GetStorage => device.get_storage().await,
         }
     }
 }
@@ -477,6 +515,51 @@ impl From<ArgResetOpcode> for ResetOpcode {
             ArgResetOpcode::Maskrom => ResetOpcode::Maskrom,
             ArgResetOpcode::Disconnect => ResetOpcode::Disconnect,
         }
+    }
+}
+
+#[derive(ValueEnum, Clone, Debug, Copy)]
+pub enum ArgStorageIndex {
+    Emmc,
+    Sd,
+    Nand,
+    SpiNand,
+    SpiNor,
+    Sata,
+    Pcie,
+}
+
+impl From<ArgStorageIndex> for StorageIndex {
+    fn from(arg: ArgStorageIndex) -> StorageIndex {
+        match arg {
+            ArgStorageIndex::Emmc => StorageIndex::Emmc,
+            ArgStorageIndex::Sd => StorageIndex::Sd,
+            ArgStorageIndex::Nand => StorageIndex::MtdBlkNand,
+            ArgStorageIndex::SpiNand => StorageIndex::MtdBlkSpiNand,
+            ArgStorageIndex::SpiNor => StorageIndex::MtdBlkSpiNor,
+            ArgStorageIndex::Sata => StorageIndex::Sata,
+            ArgStorageIndex::Pcie => StorageIndex::Pcie,
+        }
+    }
+}
+
+impl From<StorageIndex> for ArgStorageIndex {
+    fn from(index: StorageIndex) -> ArgStorageIndex {
+        match index {
+            StorageIndex::Emmc => ArgStorageIndex::Emmc,
+            StorageIndex::Sd => ArgStorageIndex::Sd,
+            StorageIndex::MtdBlkNand => ArgStorageIndex::Nand,
+            StorageIndex::MtdBlkSpiNand => ArgStorageIndex::SpiNand,
+            StorageIndex::MtdBlkSpiNor => ArgStorageIndex::SpiNor,
+            StorageIndex::Sata => ArgStorageIndex::Sata,
+            StorageIndex::Pcie => ArgStorageIndex::Pcie,
+        }
+    }
+}
+
+impl std::fmt::Display for ArgStorageIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_possible_value().unwrap().get_name())
     }
 }
 

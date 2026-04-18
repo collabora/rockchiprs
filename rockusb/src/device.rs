@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     operation::OperationSteps,
-    protocol::{Capability, ChipInfo, FlashId, FlashInfo, ResetOpcode, SECTOR_SIZE},
+    protocol::{Capability, ChipInfo, FlashId, FlashInfo, ResetOpcode, SECTOR_SIZE, StorageIndex},
 };
 
 #[cfg(feature = "async")]
@@ -154,6 +154,20 @@ where
     pub async fn reset_device(&mut self, opcode: ResetOpcode) -> DeviceResult<(), T> {
         self.transport
             .handle_operation(crate::operation::reset_device(opcode))
+            .await
+    }
+
+    /// Switch to a different storage device
+    pub async fn switch_storage(&mut self, index: StorageIndex) -> DeviceResult<(), T> {
+        self.transport
+            .handle_operation(crate::operation::switch_storage(index))
+            .await
+    }
+
+    /// Query the current storage media type
+    pub async fn get_storage(&mut self) -> DeviceResult<StorageIndex, T> {
+        self.transport
+            .handle_operation(crate::operation::get_storage())
             .await
     }
 

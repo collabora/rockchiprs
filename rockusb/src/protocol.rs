@@ -39,6 +39,8 @@ pub enum CommandCode {
     WriteNewEfuse = 0x23,
     ReadNewEfuse = 0x24,
     EraseLBA = 0x25,
+    SwitchStorage = 0x2A,
+    GetStorageMedia = 0x2B,
     ReadCapability = 0xAA,
     DeviceReset = 0xFF,
 }
@@ -176,6 +178,7 @@ impl Capability {
     const READ_IDB_CONFIG: [u8; 2] = [0, 0x40];
     const READ_SECURE_MODE: [u8; 2] = [0, 0x80];
     const NEW_IDB: [u8; 2] = [1, 0x01];
+    const SWITCH_STORAGE: [u8; 2] = [1, 0x02];
 
     pub fn from_bytes(data: [u8; 8]) -> Self {
         Capability(data)
@@ -213,6 +216,10 @@ impl Capability {
         self.check_flag(Self::NEW_IDB)
     }
 
+    pub fn switch_storage(&self) -> bool {
+        self.check_flag(Self::SWITCH_STORAGE)
+    }
+
     pub fn inner(&self) -> &[u8] {
         &self.0
     }
@@ -221,6 +228,19 @@ impl Capability {
         let [idx, bit] = flag;
         self.0[idx as usize] & bit == bit
     }
+}
+
+/// Index used for switch_storage command (bit position in BOOT_TYPE bitmask)
+#[repr(u8)]
+#[derive(Debug, Eq, PartialEq, Clone, Copy, IntoPrimitive, TryFromPrimitive)]
+pub enum StorageIndex {
+    Emmc = 1,
+    Sd = 2,
+    MtdBlkNand = 7,
+    MtdBlkSpiNand = 8,
+    MtdBlkSpiNor = 9,
+    Sata = 10,
+    Pcie = 11,
 }
 
 #[derive(Debug, thiserror::Error, Clone)]
@@ -413,6 +433,34 @@ impl CommandBlock {
     /// count, or payload length encoded in the CBW/CDB.
     pub fn cd_length(&self) -> u16 {
         self.cd_length
+    }
+
+    pub fn switch_storage(index: StorageIndex) -> CommandBlock {
+        CommandBlock {
+            tag: fastrand::u32(..),
+            transfer_length: 0,
+            flags: Direction::Out,
+            lun: 0,
+            cdb_length: 0x6,
+            cd_code: CommandCode::SwitchStorage,
+            cd_opcode: index.into(),
+            cd_address: 0,
+            cd_length: 0x0,
+        }
+    }
+
+    pub fn get_storage() -> CommandBlock {
+        CommandBlock {
+            tag: fastrand::u32(..),
+            transfer_length: 4,
+            flags: Direction::In,
+            lun: 0,
+            cdb_length: 0x6,
+            cd_code: CommandCode::GetStorageMedia,
+            cd_opcode: 0,
+            cd_address: 0,
+            cd_length: 0x0,
+        }
     }
 
     pub fn tag(&self) -> u32 {
