@@ -263,6 +263,9 @@ where
         // If the I/O operation is starting at a sector edge and encompasses at least one sector
         // then direct I/O can be done
         if sector_offset == 0 && len >= SECTOR_SIZE {
+            self.flush_buffer().await?;
+            self.state = BufferState::Invalid;
+
             // At most read the amount of bytes left
             let left = self.size - self.offset;
             let io_len = len.min(left) / SECTOR_SIZE * SECTOR_SIZE;
