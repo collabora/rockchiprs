@@ -219,6 +219,42 @@ where
     }
 
     #[maybe_async_cfg::only_if(sync)]
+    pub fn read_flash(self, path: &Path) -> Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(path)?;
+        let mut io = self.device.into_io().await?;
+        println!(
+            "Reading {} MB ({} sectors)",
+            io.size() / (1024 * 1024),
+            io.size() / 512,
+        );
+        std::io::copy(&mut io, &mut file)?;
+        Ok(())
+    }
+
+    #[maybe_async_cfg::only_if(async)]
+    pub async fn read_flash(self, path: &Path) -> Result<()> {
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(path)
+            .await?;
+        let io = self.device.into_io().await?;
+        println!(
+            "Reading {} MB ({} sectors)",
+            io.size() / (1024 * 1024),
+            io.size() / 512,
+        );
+        let mut io = io.compat();
+        tokio::io::copy(&mut io, &mut file).await?;
+        Ok(())
+    }
+
+    #[maybe_async_cfg::only_if(sync)]
     pub fn write_file(self, offset: u32, path: &Path) -> Result<()> {
         let mut file = File::open(path)?;
         let mut io = self.device.into_io().await?;
@@ -389,6 +425,10 @@ pub enum Command {
     WriteBmap {
         path: PathBuf,
     },
+    /// Read the device's entire flash to a file
+    ReadFlash {
+        path: PathBuf,
+    },
     ChipInfo,
     FlashId,
     FlashInfo,
@@ -433,6 +473,7 @@ impl Command {
             } => device.write_lba(offset, length, &path).await,
             Command::WriteFile { offset, path } => device.write_file(offset, &path).await,
             Command::WriteBmap { path } => device.write_bmap(&path).await,
+            Command::ReadFlash { path } => device.read_flash(&path).await,
             Command::ChipInfo => device.read_chip_info().await,
             Command::FlashId => device.read_flash_id().await,
             Command::FlashInfo => device.read_flash_info().await,
