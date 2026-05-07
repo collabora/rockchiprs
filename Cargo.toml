@@ -5,3 +5,5 @@ members = [
   "rockusb"
 ]
 
+[patch.crates-io]
+nusb = { git = "https://github.com/jkcoxson/nusb", branch = "webusb" }
