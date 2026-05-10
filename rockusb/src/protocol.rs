@@ -15,7 +15,7 @@ pub enum Direction {
 #[non_exhaustive]
 #[repr(u8)]
 #[derive(Debug, Eq, PartialEq, Clone, Copy, IntoPrimitive, TryFromPrimitive)]
-enum CommandCode {
+pub enum CommandCode {
     TestUnitReady = 0,
     ReadFlashId = 0x01,
     TestBadBlock = 0x03,
@@ -381,6 +381,38 @@ impl CommandBlock {
             cd_address: 0,
             cd_length: 0x0,
         }
+    }
+
+    /// Returns the RockUSB command descriptor address field.
+    ///
+    /// This is the 32-bit address or offset carried in the CBW/CDB for the
+    /// current command, as serialized by [`CommandBlock::to_bytes`].
+    pub fn cd_address(&self) -> u32 {
+        self.cd_address
+    }
+
+    /// Returns the RockUSB command code stored in the command descriptor.
+    ///
+    /// This identifies the primary RockUSB operation, such as read, write, or
+    /// device reset.
+    pub fn cd_code(&self) -> CommandCode {
+        self.cd_code
+    }
+
+    /// Returns the RockUSB command-specific opcode byte.
+    ///
+    /// This is a sub-operation or mode value associated with [`Self::cd_code`]
+    /// in the CBW/CDB.
+    pub fn cd_opcode(&self) -> u8 {
+        self.cd_opcode
+    }
+
+    /// Returns the RockUSB command descriptor length field.
+    ///
+    /// Depending on the command, this is typically the element count, sector
+    /// count, or payload length encoded in the CBW/CDB.
+    pub fn cd_length(&self) -> u16 {
+        self.cd_length
     }
 
     pub fn tag(&self) -> u32 {
