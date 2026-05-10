@@ -1,0 +1,13 @@
+[package]
+name = "rockusb-mock"
+version = "0.1.0"
+edition = "2024"
+authors = ["Sjoerd Simons <sjoerd@collabora.com>"]
+license = "MIT OR Apache-2.0"
+description = "Mock rockusb device transport for protocol testing"
+homepage = "https://github.com/collabora/rockchiprs"
+repository = "https://github.com/collabora/rockchiprs"
+
+[dependencies]
+rockusb = { path = "../rockusb", version = "0.3.0" }
+thiserror = "2.0.18"
