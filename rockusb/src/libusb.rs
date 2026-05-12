@@ -25,7 +25,7 @@ impl Devices {
     }
 
     /// Create an Iterator over found Rockchip device
-    pub fn iter(&self) -> DevicesIter {
+    pub fn iter(&self) -> DevicesIter<'_> {
         let iter = self.devices.iter();
         DevicesIter { iter }
     }
