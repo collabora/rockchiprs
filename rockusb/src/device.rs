@@ -331,8 +331,8 @@ where
         Ok(buf.len())
     }
 
-    fn do_seek(&mut self, pos: SeekFrom) -> u64 {
-        self.offset = match pos {
+    async fn do_seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        let new_offset = match pos {
             SeekFrom::Start(offset) => self.size.min(offset),
             SeekFrom::End(offset) => {
                 if offset > 0 {
@@ -352,7 +352,13 @@ where
                 }
             }
         };
-        self.offset
+        let new_sector = new_offset / SECTOR_SIZE;
+        if new_sector != self.current_sector() {
+            self.flush_buffer().await?;
+            self.state = BufferState::Invalid;
+        }
+        self.offset = new_offset;
+        Ok(self.offset)
     }
 
     async fn do_write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
@@ -429,7 +435,7 @@ where
     T: Transport,
 {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-        Ok(self.inner.do_seek(pos))
+        self.inner.do_seek(pos)
     }
 }
 
@@ -440,6 +446,7 @@ enum IoState<D, T> {
     Idle(Option<DeviceIOInnerAsync<D, T>>),
     Read(BoxFuture<'static, (DeviceIOInnerAsync<D, T>, ReadResult)>),
     Write(BoxFuture<'static, (DeviceIOInnerAsync<D, T>, std::io::Result<usize>)>),
+    Seek(BoxFuture<'static, (DeviceIOInnerAsync<D, T>, std::io::Result<u64>)>),
     Flush(BoxFuture<'static, (DeviceIOInnerAsync<D, T>, std::io::Result<()>)>),
 }
 
@@ -596,20 +603,35 @@ where
 #[cfg(feature = "async")]
 impl<T> AsyncSeek for DeviceIOAsync<DeviceAsync<T>, T>
 where
-    T: TransportAsync + Unpin,
+    T: TransportAsync + Unpin + Send + 'static,
 {
     fn poll_seek(
         self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
+        cx: &mut std::task::Context<'_>,
         pos: SeekFrom,
     ) -> std::task::Poll<futures::io::Result<u64>> {
         let me = self.get_mut();
-        match me.io_state {
-            IoState::Idle(Some(ref mut inner)) => Poll::Ready(Ok(inner.do_seek(pos))),
-            _ => Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "Invalid transport state",
-            ))),
+        loop {
+            match me.io_state {
+                IoState::Idle(ref mut inner) => {
+                    let mut inner = inner.take().unwrap();
+                    me.io_state = IoState::Seek(Box::pin(async move {
+                        let r = inner.do_seek(pos).await;
+                        (inner, r)
+                    }));
+                }
+                IoState::Seek(ref mut f) => {
+                    let (inner, r) = ready!(f.as_mut().poll(cx));
+                    me.io_state = IoState::Idle(Some(inner));
+                    return Poll::Ready(r);
+                }
+                _ => {
+                    return Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "Invalid transport state",
+                    )));
+                }
+            }
         }
     }
 }
