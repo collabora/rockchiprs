@@ -335,6 +335,10 @@ impl MockState {
         }
         Ok(start..end)
     }
+
+    pub fn flash(&self) -> &[u8] {
+        &self.flash
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
