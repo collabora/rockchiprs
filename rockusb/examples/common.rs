@@ -354,8 +354,10 @@ where
 #[derive(Debug, clap::Parser)]
 pub enum Command {
     /// List rockchip devices in rockusb mode
+    #[command(alias = "ld")]
     List,
     /// Download boot code from a rockfile (maskrom mode)
+    #[command(alias = "db")]
     DownloadBoot {
         path: PathBuf,
     },
@@ -367,6 +369,7 @@ pub enum Command {
     DownloadDDR {
         path: PathBuf,
     },
+    #[command(alias = "rl")]
     Read {
         #[clap(value_parser=maybe_hex::<u32>)]
         offset: u32,
@@ -374,6 +377,7 @@ pub enum Command {
         length: u16,
         path: PathBuf,
     },
+    #[command(alias = "wl")]
     Write {
         #[clap(value_parser=maybe_hex::<u32>)]
         offset: u32,
@@ -389,11 +393,17 @@ pub enum Command {
     WriteBmap {
         path: PathBuf,
     },
+    #[command(alias = "rci")]
     ChipInfo,
+    #[command(alias = "rid")]
     FlashId,
+    #[command(alias = "rfi")]
     FlashInfo,
+    #[command(alias = "rcb")]
     Capability,
+    #[command(alias = "ef")]
     EraseFlash,
+    #[command(alias = "rd")]
     ResetDevice {
         #[clap(value_enum, default_value_t=ArgResetOpcode::Reset)]
         opcode: ArgResetOpcode,
