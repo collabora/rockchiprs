@@ -2,6 +2,7 @@ use std::borrow::Cow;
 
 use bytes::{Buf, BufMut};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
+use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
 pub const SECTOR_SIZE: u64 = 512;
 
@@ -232,12 +233,28 @@ impl Capability {
 
 /// Index used for switch_storage command (bit position in BOOT_TYPE bitmask)
 #[repr(u8)]
-#[derive(Debug, Eq, PartialEq, Clone, Copy, IntoPrimitive, TryFromPrimitive)]
+#[derive(
+    Debug,
+    Eq,
+    PartialEq,
+    Clone,
+    Copy,
+    IntoPrimitive,
+    TryFromPrimitive,
+    Display,
+    EnumString,
+    IntoStaticStr,
+    VariantArray,
+)]
+#[strum(serialize_all = "lowercase")]
 pub enum StorageIndex {
     Emmc = 1,
     Sd = 2,
+    #[strum(to_string = "nand")]
     MtdBlkNand = 7,
+    #[strum(to_string = "spi-nand")]
     MtdBlkSpiNand = 8,
+    #[strum(to_string = "spi-nor")]
     MtdBlkSpiNor = 9,
     Sata = 10,
     Pcie = 11,
