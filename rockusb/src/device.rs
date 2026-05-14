@@ -165,9 +165,9 @@ where
     }
 
     /// Query the current storage media type
-    pub async fn get_storage(&mut self) -> DeviceResult<StorageIndex, T> {
+    pub async fn storage(&mut self) -> DeviceResult<StorageIndex, T> {
         self.transport
-            .handle_operation(crate::operation::get_storage())
+            .handle_operation(crate::operation::storage())
             .await
     }
 

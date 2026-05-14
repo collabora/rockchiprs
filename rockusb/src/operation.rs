@@ -400,14 +400,14 @@ impl FromOperation for StorageIndex {
     }
 }
 
-/// Create operation to switch the active storage device
+/// Create operation to switch the active storage media
 pub fn switch_storage(index: StorageIndex) -> UsbOperation<'static, ()> {
     UsbOperation::new(CommandBlock::switch_storage(index))
 }
 
 /// Create operation to query the current storage media type
-pub fn get_storage() -> UsbOperation<'static, StorageIndex> {
-    UsbOperation::new(CommandBlock::get_storage())
+pub fn storage() -> UsbOperation<'static, StorageIndex> {
+    UsbOperation::new(CommandBlock::storage())
 }
 
 /// Bytes transferred

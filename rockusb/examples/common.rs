@@ -197,7 +197,7 @@ where
         self.device.switch_storage(index).await?;
         // Rockchip protocol does not provide a way to get return code from
         // the "rkusb_do_switch_storage" function, so we can only check again
-        let new_index = self.device.get_storage().await?;
+        let new_index = self.device.storage().await?;
         if new_index == index {
             println!("Switched storage to {}", index);
         } else {
@@ -209,8 +209,8 @@ where
         Ok(())
     }
 
-    pub async fn get_storage(&mut self) -> Result<()> {
-        let media = self.device.get_storage().await?;
+    pub async fn storage(&mut self) -> Result<()> {
+        let media = self.device.storage().await?;
         println!("Storage media: {}", media);
         Ok(())
     }
@@ -440,7 +440,7 @@ pub enum Command {
         storage: StorageIndex,
     },
     /// Query the current storage type
-    GetStorage,
+    Storage,
 }
 
 impl Command {
@@ -483,7 +483,7 @@ impl Command {
             Command::Capability => device.read_capability().await,
             Command::ResetDevice { opcode } => device.reset_device(opcode).await,
             Command::SwitchStorage { storage } => device.switch_storage(storage).await,
-            Command::GetStorage => device.get_storage().await,
+            Command::Storage => device.storage().await,
         }
     }
 }

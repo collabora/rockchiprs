@@ -526,7 +526,7 @@ impl CommandBlock {
         }
     }
 
-    pub fn get_storage() -> CommandBlock {
+    pub fn storage() -> CommandBlock {
         CommandBlock {
             tag: fastrand::u32(..),
             transfer_length: 4,
