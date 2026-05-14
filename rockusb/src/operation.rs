@@ -395,8 +395,7 @@ impl FromOperation for StorageIndex {
         if data.count_ones() != 1 {
             return Err(UsbOperationError::ReplyParseFailure);
         }
-        let index = StorageIndex::try_from(data.trailing_zeros() as u8)
-            .map_err(|_e| UsbOperationError::ReplyParseFailure)?;
+        let index = StorageIndex::from(data.trailing_zeros() as u8);
         Ok(index)
     }
 }

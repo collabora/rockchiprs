@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use bytes::{Buf, BufMut};
-use num_enum::{IntoPrimitive, TryFromPrimitive};
+use num_enum::{FromPrimitive, IntoPrimitive, TryFromPrimitive};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
 pub const SECTOR_SIZE: u64 = 512;
@@ -245,33 +245,79 @@ impl Capability {
     }
 }
 
-/// Index used for switch_storage command (bit position in BOOT_TYPE bitmask)
+/// Index used for switch_storage command (bit position in BOOT_TYPE bitmask).
+///
+/// Named variants map to the bit positions defined in the Rockchip u-boot
+/// `BOOT_TYPE_*` constants.  `Unknown` carries any value not (yet) recognised
+/// by this library so that callers are never forced to treat an unrecognised
+/// device as an error.
+#[non_exhaustive]
 #[repr(u8)]
 #[derive(
-    Debug,
-    Eq,
-    PartialEq,
-    Clone,
-    Copy,
-    IntoPrimitive,
-    TryFromPrimitive,
-    Display,
-    EnumString,
-    IntoStaticStr,
-    VariantArray,
+    Debug, Eq, PartialEq, Clone, Copy, FromPrimitive, EnumString, IntoStaticStr, IntoPrimitive,
 )]
-#[strum(serialize_all = "lowercase")]
+#[strum(serialize_all = "kebab-case")]
 pub enum StorageIndex {
+    /// BOOT_TYPE_NAND (bit 0)
+    Nand = 0,
+    /// BOOT_TYPE_EMMC (bit 1)
     Emmc = 1,
-    Sd = 2,
-    #[strum(to_string = "nand")]
+    /// BOOT_TYPE_SD0 (bit 2)
+    #[strum(to_string = "sd0")]
+    Sd0 = 2,
+    /// BOOT_TYPE_SD1 (bit 3)
+    #[strum(to_string = "sd1")]
+    Sd1 = 3,
+    /// BOOT_TYPE_SPI_NOR (bit 4)
+    SpiNor = 4,
+    /// BOOT_TYPE_SPI_NAND (bit 5)
+    SpiNand = 5,
+    /// BOOT_TYPE_RAM (bit 6)
+    Ram = 6,
+    /// BOOT_TYPE_MTD_BLK_NAND (bit 7)
     MtdBlkNand = 7,
-    #[strum(to_string = "spi-nand")]
+    /// BOOT_TYPE_MTD_BLK_SPI_NAND (bit 8)
     MtdBlkSpiNand = 8,
-    #[strum(to_string = "spi-nor")]
+    /// BOOT_TYPE_MTD_BLK_SPI_NOR (bit 9)
     MtdBlkSpiNor = 9,
+    /// BOOT_TYPE_SATA (bit 10)
     Sata = 10,
+    /// BOOT_TYPE_PCIE (bit 11)
     Pcie = 11,
+    /// BOOT_TYPE_UFS (bit 12)
+    Ufs = 12,
+    /// Unknown index for future proofing
+    #[num_enum(catch_all)]
+    #[strum(disabled)]
+    Unknown(u8) = 255,
+}
+
+impl StorageIndex {
+    /// All named storage variants (excludes `Unknown`).
+    pub const VARIANTS: &'static [Self] = &[
+        Self::Nand,
+        Self::Emmc,
+        Self::Sd0,
+        Self::Sd1,
+        Self::SpiNor,
+        Self::SpiNand,
+        Self::Ram,
+        Self::MtdBlkNand,
+        Self::MtdBlkSpiNand,
+        Self::MtdBlkSpiNor,
+        Self::Sata,
+        Self::Pcie,
+        Self::Ufs,
+    ];
+}
+
+impl std::fmt::Display for StorageIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unknown(v) => write!(f, "{v}"),
+            known => f.write_str(<&'static str>::from(known)),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error, Clone)]

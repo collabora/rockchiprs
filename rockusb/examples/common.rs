@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::{Result, anyhow, ensure};
 use bmap_parser::Bmap;
-use clap::builder::TypedValueParser as _;
+use clap::builder::TypedValueParser;
 use clap_num::maybe_hex;
 use flate2::read::GzDecoder;
 use rockfile::boot::{
@@ -489,13 +489,50 @@ impl Command {
 }
 
 fn storage_parser() -> impl clap::builder::TypedValueParser<Value = StorageIndex> {
-    use strum::VariantArray as _;
-    clap::builder::PossibleValuesParser::new(
-        StorageIndex::VARIANTS
-            .iter()
-            .map(|v| -> &'static str { v.into() }),
-    )
-    .map(|s: String| s.parse::<StorageIndex>().unwrap())
+    StorageIndexParser
+}
+
+#[derive(Clone)]
+struct StorageIndexParser;
+
+impl clap::builder::TypedValueParser for StorageIndexParser {
+    type Value = StorageIndex;
+
+    fn parse_ref(
+        &self,
+        cmd: &clap::Command,
+        arg: Option<&clap::Arg>,
+        value: &std::ffi::OsStr,
+    ) -> Result<StorageIndex, clap::Error> {
+        let s = value.to_string_lossy();
+        if let Ok(idx) = s.parse::<StorageIndex>() {
+            return Ok(idx);
+        }
+        if let Ok(v) = s.parse::<u8>() {
+            return Ok(StorageIndex::from(v));
+        }
+        let mut err = clap::Error::new(clap::error::ErrorKind::InvalidValue).with_cmd(cmd);
+        if let Some(arg) = arg {
+            err.insert(
+                clap::error::ContextKind::InvalidArg,
+                clap::error::ContextValue::String(arg.to_string()),
+            );
+        }
+        err.insert(
+            clap::error::ContextKind::InvalidValue,
+            clap::error::ContextValue::String(s.into_owned()),
+        );
+        Err(err)
+    }
+
+    fn possible_values(
+        &self,
+    ) -> Option<Box<dyn Iterator<Item = clap::builder::PossibleValue> + '_>> {
+        Some(Box::new(StorageIndex::VARIANTS.iter().map(|v| {
+            let name: &'static str = v.into();
+            clap::builder::PossibleValue::new(name)
+        })))
+    }
 }
 
 fn reset_parser() -> impl clap::builder::TypedValueParser<Value = ResetOpcode> {
