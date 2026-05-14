@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::{Result, anyhow, ensure};
 use bmap_parser::Bmap;
-use clap::{ValueEnum, builder::TypedValueParser as _};
+use clap::builder::TypedValueParser as _;
 use clap_num::maybe_hex;
 use flate2::read::GzDecoder;
 use rockfile::boot::{
@@ -431,8 +431,8 @@ pub enum Command {
     EraseFlash,
     #[command(alias = "rd")]
     ResetDevice {
-        #[clap(value_enum, default_value_t=ArgResetOpcode::Reset)]
-        opcode: ArgResetOpcode,
+        #[arg(value_parser = reset_parser(), default_value_t = ResetOpcode::Reset)]
+        opcode: ResetOpcode,
     },
     /// Switch to a different storage device
     SwitchStorage {
@@ -481,7 +481,7 @@ impl Command {
             Command::FlashInfo => device.read_flash_info().await,
             Command::EraseFlash => device.erase_flash().await,
             Command::Capability => device.read_capability().await,
-            Command::ResetDevice { opcode } => device.reset_device(opcode.into()).await,
+            Command::ResetDevice { opcode } => device.reset_device(opcode).await,
             Command::SwitchStorage { storage } => device.switch_storage(storage).await,
             Command::GetStorage => device.get_storage().await,
         }
@@ -498,31 +498,14 @@ fn storage_parser() -> impl clap::builder::TypedValueParser<Value = StorageIndex
     .map(|s: String| s.parse::<StorageIndex>().unwrap())
 }
 
-#[derive(ValueEnum, Clone, Debug)]
-pub enum ArgResetOpcode {
-    /// Reset
-    Reset,
-    /// Reset to USB mass-storage device class
-    #[allow(clippy::upper_case_acronyms)]
-    MSC,
-    /// Powers the SOC off
-    PowerOff,
-    /// Reset to maskrom mode
-    Maskrom,
-    /// Disconnect from USB
-    Disconnect,
-}
-
-impl From<ArgResetOpcode> for ResetOpcode {
-    fn from(arg: ArgResetOpcode) -> ResetOpcode {
-        match arg {
-            ArgResetOpcode::Reset => ResetOpcode::Reset,
-            ArgResetOpcode::MSC => ResetOpcode::MSC,
-            ArgResetOpcode::PowerOff => ResetOpcode::PowerOff,
-            ArgResetOpcode::Maskrom => ResetOpcode::Maskrom,
-            ArgResetOpcode::Disconnect => ResetOpcode::Disconnect,
-        }
-    }
+fn reset_parser() -> impl clap::builder::TypedValueParser<Value = ResetOpcode> {
+    use strum::VariantArray as _;
+    clap::builder::PossibleValuesParser::new(
+        ResetOpcode::VARIANTS
+            .iter()
+            .map(|v| -> &'static str { v.into() }),
+    )
+    .map(|s: String| s.parse::<ResetOpcode>().unwrap())
 }
 
 #[derive(Debug, Clone)]

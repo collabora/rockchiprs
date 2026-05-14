@@ -47,11 +47,25 @@ pub enum CommandCode {
 }
 
 #[repr(u8)]
-#[derive(Debug, Eq, PartialEq, Clone, Copy, IntoPrimitive, TryFromPrimitive)]
+#[derive(
+    Debug,
+    Eq,
+    PartialEq,
+    Clone,
+    Copy,
+    IntoPrimitive,
+    TryFromPrimitive,
+    Display,
+    EnumString,
+    IntoStaticStr,
+    VariantArray,
+)]
+#[strum(serialize_all = "kebab-case")]
 pub enum ResetOpcode {
     /// Reset
     Reset = 0,
     /// Reset to USB mass-storage device class
+    #[strum(to_string = "msc")]
     MSC,
     /// Powers the SOC off
     PowerOff,
