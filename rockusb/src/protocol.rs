@@ -1,7 +1,8 @@
 use std::borrow::Cow;
 
 use bytes::{Buf, BufMut};
-use num_enum::{IntoPrimitive, TryFromPrimitive};
+use num_enum::{FromPrimitive, IntoPrimitive, TryFromPrimitive};
+use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
 pub const SECTOR_SIZE: u64 = 512;
 
@@ -39,16 +40,32 @@ pub enum CommandCode {
     WriteNewEfuse = 0x23,
     ReadNewEfuse = 0x24,
     EraseLBA = 0x25,
+    SwitchStorage = 0x2A,
+    GetStorageMedia = 0x2B,
     ReadCapability = 0xAA,
     DeviceReset = 0xFF,
 }
 
 #[repr(u8)]
-#[derive(Debug, Eq, PartialEq, Clone, Copy, IntoPrimitive, TryFromPrimitive)]
+#[derive(
+    Debug,
+    Eq,
+    PartialEq,
+    Clone,
+    Copy,
+    IntoPrimitive,
+    TryFromPrimitive,
+    Display,
+    EnumString,
+    IntoStaticStr,
+    VariantArray,
+)]
+#[strum(serialize_all = "kebab-case")]
 pub enum ResetOpcode {
     /// Reset
     Reset = 0,
     /// Reset to USB mass-storage device class
+    #[strum(to_string = "msc")]
     MSC,
     /// Powers the SOC off
     PowerOff,
@@ -176,6 +193,7 @@ impl Capability {
     const READ_IDB_CONFIG: [u8; 2] = [0, 0x40];
     const READ_SECURE_MODE: [u8; 2] = [0, 0x80];
     const NEW_IDB: [u8; 2] = [1, 0x01];
+    const SWITCH_STORAGE: [u8; 2] = [1, 0x02];
 
     pub fn from_bytes(data: [u8; 8]) -> Self {
         Capability(data)
@@ -213,6 +231,10 @@ impl Capability {
         self.check_flag(Self::NEW_IDB)
     }
 
+    pub fn switch_storage(&self) -> bool {
+        self.check_flag(Self::SWITCH_STORAGE)
+    }
+
     pub fn inner(&self) -> &[u8] {
         &self.0
     }
@@ -220,6 +242,81 @@ impl Capability {
     fn check_flag(&self, flag: [u8; 2]) -> bool {
         let [idx, bit] = flag;
         self.0[idx as usize] & bit == bit
+    }
+}
+
+/// Index used for switch_storage command (bit position in BOOT_TYPE bitmask).
+///
+/// Named variants map to the bit positions defined in the Rockchip u-boot
+/// `BOOT_TYPE_*` constants.  `Unknown` carries any value not (yet) recognised
+/// by this library so that callers are never forced to treat an unrecognised
+/// device as an error.
+#[non_exhaustive]
+#[repr(u8)]
+#[derive(
+    Debug, Eq, PartialEq, Clone, Copy, FromPrimitive, EnumString, IntoStaticStr, IntoPrimitive,
+)]
+#[strum(serialize_all = "kebab-case")]
+pub enum StorageIndex {
+    /// BOOT_TYPE_NAND (bit 0)
+    Nand = 0,
+    /// BOOT_TYPE_EMMC (bit 1)
+    Emmc = 1,
+    /// BOOT_TYPE_SD0 (bit 2)
+    #[strum(to_string = "sd0")]
+    Sd0 = 2,
+    /// BOOT_TYPE_SD1 (bit 3)
+    #[strum(to_string = "sd1")]
+    Sd1 = 3,
+    /// BOOT_TYPE_SPI_NOR (bit 4)
+    SpiNor = 4,
+    /// BOOT_TYPE_SPI_NAND (bit 5)
+    SpiNand = 5,
+    /// BOOT_TYPE_RAM (bit 6)
+    Ram = 6,
+    /// BOOT_TYPE_MTD_BLK_NAND (bit 7)
+    MtdBlkNand = 7,
+    /// BOOT_TYPE_MTD_BLK_SPI_NAND (bit 8)
+    MtdBlkSpiNand = 8,
+    /// BOOT_TYPE_MTD_BLK_SPI_NOR (bit 9)
+    MtdBlkSpiNor = 9,
+    /// BOOT_TYPE_SATA (bit 10)
+    Sata = 10,
+    /// BOOT_TYPE_PCIE (bit 11)
+    Pcie = 11,
+    /// BOOT_TYPE_UFS (bit 12)
+    Ufs = 12,
+    /// Unknown index for future proofing
+    #[num_enum(catch_all)]
+    #[strum(disabled)]
+    Unknown(u8) = 255,
+}
+
+impl StorageIndex {
+    /// All named storage variants (excludes `Unknown`).
+    pub const VARIANTS: &'static [Self] = &[
+        Self::Nand,
+        Self::Emmc,
+        Self::Sd0,
+        Self::Sd1,
+        Self::SpiNor,
+        Self::SpiNand,
+        Self::Ram,
+        Self::MtdBlkNand,
+        Self::MtdBlkSpiNand,
+        Self::MtdBlkSpiNor,
+        Self::Sata,
+        Self::Pcie,
+        Self::Ufs,
+    ];
+}
+
+impl std::fmt::Display for StorageIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unknown(v) => write!(f, "{v}"),
+            known => f.write_str(<&'static str>::from(known)),
+        }
     }
 }
 
@@ -413,6 +510,34 @@ impl CommandBlock {
     /// count, or payload length encoded in the CBW/CDB.
     pub fn cd_length(&self) -> u16 {
         self.cd_length
+    }
+
+    pub fn switch_storage(index: StorageIndex) -> CommandBlock {
+        CommandBlock {
+            tag: fastrand::u32(..),
+            transfer_length: 0,
+            flags: Direction::Out,
+            lun: 0,
+            cdb_length: 0x6,
+            cd_code: CommandCode::SwitchStorage,
+            cd_opcode: index.into(),
+            cd_address: 0,
+            cd_length: 0x0,
+        }
+    }
+
+    pub fn storage() -> CommandBlock {
+        CommandBlock {
+            tag: fastrand::u32(..),
+            transfer_length: 4,
+            flags: Direction::In,
+            lun: 0,
+            cdb_length: 0x6,
+            cd_code: CommandCode::GetStorageMedia,
+            cd_opcode: 0,
+            cd_address: 0,
+            cd_length: 0x0,
+        }
     }
 
     pub fn tag(&self) -> u32 {

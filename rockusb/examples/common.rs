@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::{Result, anyhow, ensure};
 use bmap_parser::Bmap;
-use clap::ValueEnum;
+use clap::builder::TypedValueParser;
 use clap_num::maybe_hex;
 use flate2::read::GzDecoder;
 use rockfile::boot::{
@@ -17,7 +17,7 @@ use rockfile::boot::{
 };
 use rockusb::{
     device::{Device, Transport},
-    protocol::ResetOpcode,
+    protocol::{ResetOpcode, StorageIndex},
 };
 
 #[cfg(feature = "async")]
@@ -130,6 +130,10 @@ where
             println!(" - New IDB");
         }
 
+        if capability.switch_storage() {
+            println!(" - Switch storage");
+        }
+
         Ok(())
     }
 
@@ -186,6 +190,28 @@ where
 
     pub async fn reset_device(&mut self, opcode: ResetOpcode) -> Result<()> {
         self.device.reset_device(opcode).await?;
+        Ok(())
+    }
+
+    pub async fn switch_storage(&mut self, index: StorageIndex) -> Result<()> {
+        self.device.switch_storage(index).await?;
+        // Rockchip protocol does not provide a way to get return code from
+        // the "rkusb_do_switch_storage" function, so we can only check again
+        let new_index = self.device.storage().await?;
+        if new_index == index {
+            println!("Switched storage to {}", index);
+        } else {
+            println!(
+                "Failed to switch storage to {}, current storage is {}",
+                index, new_index
+            );
+        }
+        Ok(())
+    }
+
+    pub async fn storage(&mut self) -> Result<()> {
+        let media = self.device.storage().await?;
+        println!("Storage media: {}", media);
         Ok(())
     }
 
@@ -405,9 +431,16 @@ pub enum Command {
     EraseFlash,
     #[command(alias = "rd")]
     ResetDevice {
-        #[clap(value_enum, default_value_t=ArgResetOpcode::Reset)]
-        opcode: ArgResetOpcode,
+        #[arg(value_parser = reset_parser(), default_value_t = ResetOpcode::Reset)]
+        opcode: ResetOpcode,
     },
+    /// Switch to a different storage device
+    SwitchStorage {
+        #[arg(value_parser = storage_parser())]
+        storage: StorageIndex,
+    },
+    /// Query the current storage type
+    Storage,
 }
 
 impl Command {
@@ -448,36 +481,68 @@ impl Command {
             Command::FlashInfo => device.read_flash_info().await,
             Command::EraseFlash => device.erase_flash().await,
             Command::Capability => device.read_capability().await,
-            Command::ResetDevice { opcode } => device.reset_device(opcode.into()).await,
+            Command::ResetDevice { opcode } => device.reset_device(opcode).await,
+            Command::SwitchStorage { storage } => device.switch_storage(storage).await,
+            Command::Storage => device.storage().await,
         }
     }
 }
 
-#[derive(ValueEnum, Clone, Debug)]
-pub enum ArgResetOpcode {
-    /// Reset
-    Reset,
-    /// Reset to USB mass-storage device class
-    #[allow(clippy::upper_case_acronyms)]
-    MSC,
-    /// Powers the SOC off
-    PowerOff,
-    /// Reset to maskrom mode
-    Maskrom,
-    /// Disconnect from USB
-    Disconnect,
+fn storage_parser() -> impl clap::builder::TypedValueParser<Value = StorageIndex> {
+    StorageIndexParser
 }
 
-impl From<ArgResetOpcode> for ResetOpcode {
-    fn from(arg: ArgResetOpcode) -> ResetOpcode {
-        match arg {
-            ArgResetOpcode::Reset => ResetOpcode::Reset,
-            ArgResetOpcode::MSC => ResetOpcode::MSC,
-            ArgResetOpcode::PowerOff => ResetOpcode::PowerOff,
-            ArgResetOpcode::Maskrom => ResetOpcode::Maskrom,
-            ArgResetOpcode::Disconnect => ResetOpcode::Disconnect,
+#[derive(Clone)]
+struct StorageIndexParser;
+
+impl clap::builder::TypedValueParser for StorageIndexParser {
+    type Value = StorageIndex;
+
+    fn parse_ref(
+        &self,
+        cmd: &clap::Command,
+        arg: Option<&clap::Arg>,
+        value: &std::ffi::OsStr,
+    ) -> Result<StorageIndex, clap::Error> {
+        let s = value.to_string_lossy();
+        if let Ok(idx) = s.parse::<StorageIndex>() {
+            return Ok(idx);
         }
+        if let Ok(v) = s.parse::<u8>() {
+            return Ok(StorageIndex::from(v));
+        }
+        let mut err = clap::Error::new(clap::error::ErrorKind::InvalidValue).with_cmd(cmd);
+        if let Some(arg) = arg {
+            err.insert(
+                clap::error::ContextKind::InvalidArg,
+                clap::error::ContextValue::String(arg.to_string()),
+            );
+        }
+        err.insert(
+            clap::error::ContextKind::InvalidValue,
+            clap::error::ContextValue::String(s.into_owned()),
+        );
+        Err(err)
     }
+
+    fn possible_values(
+        &self,
+    ) -> Option<Box<dyn Iterator<Item = clap::builder::PossibleValue> + '_>> {
+        Some(Box::new(StorageIndex::VARIANTS.iter().map(|v| {
+            let name: &'static str = v.into();
+            clap::builder::PossibleValue::new(name)
+        })))
+    }
+}
+
+fn reset_parser() -> impl clap::builder::TypedValueParser<Value = ResetOpcode> {
+    use strum::VariantArray as _;
+    clap::builder::PossibleValuesParser::new(
+        ResetOpcode::VARIANTS
+            .iter()
+            .map(|v| -> &'static str { v.into() }),
+    )
+    .map(|s: String| s.parse::<ResetOpcode>().unwrap())
 }
 
 #[derive(Debug, Clone)]
