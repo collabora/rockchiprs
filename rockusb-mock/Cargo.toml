@@ -9,5 +9,5 @@ homepage = "https://github.com/collabora/rockchiprs"
 repository = "https://github.com/collabora/rockchiprs"
 
 [dependencies]
-rockusb = { path = "../rockusb", version = "0.3.0" }
+rockusb = { path = "../rockusb", version = "0.4.0" }
 thiserror = "2.0.18"
