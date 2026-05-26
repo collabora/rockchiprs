@@ -547,17 +547,16 @@ fn reset_parser() -> impl clap::builder::TypedValueParser<Value = ResetOpcode> {
 
 #[derive(Debug, Clone)]
 pub struct DeviceArg {
-    pub bus_number: u8,
+    pub bus_id: String,
     pub address: u8,
 }
 
 fn parse_device(device: &str) -> Result<DeviceArg> {
     let mut parts = device.split(':');
-    let bus_number = parts
+    let bus_id = parts
         .next()
-        .ok_or_else(|| anyhow!("No bus number: use <bus>:<address>"))?
-        .parse()
-        .map_err(|_| anyhow!("Bus should be a number"))?;
+        .ok_or_else(|| anyhow!("No bus id: use <bus>:<address>"))?
+        .to_string();
     let address = parts
         .next()
         .ok_or_else(|| anyhow!("No address: use <bus>:<address>"))?
@@ -567,7 +566,7 @@ fn parse_device(device: &str) -> Result<DeviceArg> {
         return Err(anyhow!("Too many parts"));
     }
     Ok(DeviceArg {
-        bus_number,
+        bus_id,
         address,
     })
 }
