@@ -24,7 +24,7 @@ num_enum = "0.7"
 strum = { version = "0.27", features = ["derive"] }
 thiserror = "2.0.7"
 rusb = { version = "0.9.4", optional = true }
-nusb = { version = "0.2.1", optional = true, features = [ "tokio" ] }
+nusb = { version = "0.2.1", optional = true }
 futures = { version = "0.3.31", optional = true }
 maybe-async-cfg = "0.2.5"
 
