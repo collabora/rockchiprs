@@ -67,11 +67,14 @@ impl crate::device::TransportAsync for Transport {
                 }
                 UsbStep::ReadBulk { data } => {
                     // For IN transfers, requested_len must be a multiple of max_packet_size
-                    let buf = Buffer::new(data.len());
+                    let max_packet_size = self.ep_in.max_packet_size();
+                    let requested_len = data.len().next_multiple_of(max_packet_size);
+                    let buf = Buffer::new(requested_len);
                     self.ep_in.submit(buf);
                     let completion = self.ep_in.next_complete().await;
                     let result_buf = completion.into_result()?;
-                    data.copy_from_slice(&result_buf);
+                    let copy_len = data.len().min(result_buf.len());
+                    data[..copy_len].copy_from_slice(&result_buf[..copy_len]);
                 }
                 UsbStep::WriteControl {
                     request_type,
