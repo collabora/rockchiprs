@@ -565,10 +565,7 @@ fn parse_device(device: &str) -> Result<DeviceArg> {
     if parts.next().is_some() {
         return Err(anyhow!("Too many parts"));
     }
-    Ok(DeviceArg {
-        bus_id,
-        address,
-    })
+    Ok(DeviceArg { bus_id, address })
 }
 
 #[derive(clap::Parser)]
