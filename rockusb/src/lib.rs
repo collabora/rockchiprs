@@ -6,6 +6,8 @@ pub mod device;
 /// libusb transport implementation
 #[cfg(feature = "libusb")]
 pub mod libusb;
+/// Conditional Send bounds for async code
+pub mod maybe_send;
 /// nusb transport implementation
 #[cfg(feature = "nusb")]
 pub mod nusb;
