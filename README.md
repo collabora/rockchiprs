@@ -7,6 +7,7 @@ distributed for early flashing.
 
 * [rockusb](rockusb/README.md) - A crate implementing the client side of the rockchip usb protocol
 * [rockfile](rockfile/README.md) - A crate implementing helpers for rockchip specific file formats
+* [rockusb-mock](rockusb-mock/README.md) - A mock rockusb device for protocol testing
 
 ## rockusb example tool
 

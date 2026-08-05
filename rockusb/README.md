@@ -23,10 +23,10 @@ Printing chip info using nusb backend:
 # #[cfg(feature = "nusb")] {
 # #[tokio::main]
 # async fn main() -> anyhow::Result<()> {
-let mut devices = rockusb::nusb::devices()?;
+let mut devices = rockusb::nusb::devices().await?;
 let info = devices.next()
     .ok_or_else(|| anyhow::anyhow!("No Device found"))?;
-let mut device = rockusb::nusb::Device::from_usb_device_info(info)?;
+let mut device = rockusb::nusb::Device::from_usb_device_info(info).await?;
 println!("Chip Info: {:0x?}", device.chip_info().await?);
 Ok(())
 # }

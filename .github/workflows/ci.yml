@@ -11,10 +11,10 @@ jobs:
     name: cargo test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master # avoid the tack to prevent dependabot updates
         with:
-          toolchain: "1.86"
+          toolchain: "1.94"
       - run: cargo test --all-targets --all-features
       - run: cargo test --doc --all-features
 
@@ -22,10 +22,10 @@ jobs:
     name: cargo fmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master # avoid the tack to prevent dependabot updates
         with:
-          toolchain: "1.86"
+          toolchain: "1.94"
           components: rustfmt
       - run: cargo fmt --all --check
 
@@ -33,10 +33,10 @@ jobs:
     name: cargo clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master # avoid the tack to prevent dependabot updates
         with:
-          toolchain: "1.86"
+          toolchain: "1.94"
           components: clippy
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo clippy --all-targets --features=nusb -- -D warnings
