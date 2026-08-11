@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
     let mut devices = rockusb::nusb::devices().await?;
     let info = if let Some(dev) = opt.device {
         devices
-            .find(|d| d.bus_id() == dev.bus_id && d.device_address() == dev.address)
+            .find(|d| dev.matches_bus(d.bus_id(), d.device_address()))
             .ok_or_else(|| anyhow!("Specified device not found"))?
     } else {
         let mut devices: Vec<_> = devices.collect();

@@ -546,26 +546,72 @@ fn reset_parser() -> impl clap::builder::TypedValueParser<Value = ResetOpcode> {
 }
 
 #[derive(Debug, Clone)]
+#[allow(unused)]
+pub enum Bus {
+    Number(u8),
+    Id(String),
+}
+
+#[allow(dead_code)]
+impl Bus {
+    pub fn matches_bus(&self, bus: &str) -> bool {
+        match self {
+            Bus::Number(n) => {
+                if let Ok(b) = bus.parse::<u8>() {
+                    b == *n
+                } else {
+                    false
+                }
+            }
+            Bus::Id(id) => id == bus,
+        }
+    }
+
+    fn matches_bus_number(&self, bus: u8) -> bool {
+        match self {
+            Bus::Number(n) => bus == *n,
+            Bus::Id(_) => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct DeviceArg {
-    pub bus_id: String,
+    pub bus: Bus,
     pub address: u8,
+}
+
+#[allow(dead_code)]
+impl DeviceArg {
+    pub fn matches_bus(&self, bus: &str, address: u8) -> bool {
+        self.bus.matches_bus(bus) && address == self.address
+    }
+
+    pub fn matches_bus_number(&self, bus: u8, address: u8) -> bool {
+        self.bus.matches_bus_number(bus) && address == self.address
+    }
 }
 
 fn parse_device(device: &str) -> Result<DeviceArg> {
     let mut parts = device.split(':');
-    let bus_id = parts
+    let bus = parts
         .next()
-        .ok_or_else(|| anyhow!("No bus id: use <bus>:<address>"))?
-        .to_string();
+        .ok_or_else(|| anyhow!("No bus id: use <bus>:<address>"))?;
+    let bus = if let Ok(bus_number) = bus.parse() {
+        Bus::Number(bus_number)
+    } else {
+        Bus::Id(bus.to_string())
+    };
+
     let address = parts
         .next()
         .ok_or_else(|| anyhow!("No address: use <bus>:<address>"))?
         .parse()
-        .map_err(|_| anyhow!("Address should be a numbrer"))?;
+        .map_err(|_| anyhow!("Address should be a number"))?;
     if parts.next().is_some() {
         return Err(anyhow!("Too many parts"));
     }
-    Ok(DeviceArg { bus_id, address })
+    Ok(DeviceArg { bus, address })
 }
 
 #[derive(clap::Parser)]
