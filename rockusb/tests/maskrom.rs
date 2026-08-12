@@ -30,6 +30,20 @@ fn simple_maskrom() {
 }
 
 #[test]
+fn maskrom_no_crc() {
+    let mut mock = MockDevice::default();
+    let device = mock.device();
+
+    device.write_maskrom_area_no_crc(0x471, b"sram").unwrap();
+
+    // sram + crc16
+    let area = mock.maskrom_area(0x471).unwrap();
+    assert_eq!(area.len(), 6);
+    assert_eq!(&area[..4], b"sram");
+    assert_eq!(area[4..6], [0x0, 0x0]);
+}
+
+#[test]
 fn maskrom_4094_byte_payload_adds_dummy_write() {
     let mut mock = MockDevice::default();
     let device = mock.device();
