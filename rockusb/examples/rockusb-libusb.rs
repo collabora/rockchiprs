@@ -32,11 +32,9 @@ fn main() -> Result<()> {
         devices
             .iter()
             .find(|d| match d {
-                Ok(device) => {
-                    device.bus_number() == dev.bus_number && device.address() == dev.address
-                }
+                Ok(device) => dev.matches_bus_number(device.bus_number(), device.address()),
                 Err(DeviceUnavalable { device, .. }) => {
-                    device.bus_number() == dev.bus_number && device.address() == dev.address
+                    dev.matches_bus_number(device.bus_number(), device.address())
                 }
             })
             .ok_or_else(|| anyhow!("Specified device not found"))?
