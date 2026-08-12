@@ -36,7 +36,7 @@ fn maskrom_no_crc() {
 
     device.write_maskrom_area_no_crc(0x471, b"sram").unwrap();
 
-    // sram + crc16
+    // sram + zeroed CRC16 (skip ROM CRC check on supported chips)
     let area = mock.maskrom_area(0x471).unwrap();
     assert_eq!(area.len(), 6);
     assert_eq!(&area[..4], b"sram");

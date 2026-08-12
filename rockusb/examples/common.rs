@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::{Result, anyhow, ensure};
 use bmap_parser::Bmap;
-use clap::builder::TypedValueParser;
+use clap::{ArgAction, builder::TypedValueParser};
 use clap_num::maybe_hex;
 use flate2::read::GzDecoder;
 use rockfile::boot::{
@@ -326,6 +326,7 @@ where
         header: RkBootHeaderEntry,
         code: u16,
         file: &mut File,
+        crc: bool,
     ) -> Result<()> {
         for i in 0..header.count {
             let mut entry: RkBootEntryBytes = [0; 57];
@@ -343,7 +344,11 @@ where
             file.seek(SeekFrom::Start(entry.data_offset as u64))?;
             file.read_exact(&mut data)?;
 
-            self.device.write_maskrom_area(code, &data).await?;
+            if crc {
+                self.device.write_maskrom_area(code, &data).await?;
+            } else {
+                self.device.write_maskrom_area_no_crc(code, &data).await?;
+            }
 
             println!("Done!... waiting {}ms", entry.data_delay);
             if entry.data_delay > 0 {
@@ -354,7 +359,7 @@ where
         Ok(())
     }
 
-    pub async fn download_boot(&mut self, path: &Path) -> Result<()> {
+    pub async fn download_boot(&mut self, path: &Path, crc: bool) -> Result<()> {
         let mut file = File::open(path)?;
         let mut header: RkBootHeaderBytes = [0; 102];
         file.read_exact(&mut header)?;
@@ -362,17 +367,21 @@ where
         let header =
             RkBootHeader::from_bytes(&header).ok_or_else(|| anyhow!("Failed to parse header"))?;
 
-        self.download_entry(header.entry_471, 0x471, &mut file)
+        self.download_entry(header.entry_471, 0x471, &mut file, crc)
             .await?;
-        self.download_entry(header.entry_472, 0x472, &mut file)
+        self.download_entry(header.entry_472, 0x472, &mut file, crc)
             .await?;
 
         Ok(())
     }
 
-    pub async fn download_maskrom_area(&mut self, area: u16, path: &Path) -> Result<()> {
+    pub async fn download_maskrom_area(&mut self, area: u16, path: &Path, crc: bool) -> Result<()> {
         let data = std::fs::read(path)?;
-        self.device.write_maskrom_area(area, &data).await?;
+        if crc {
+            self.device.write_maskrom_area(area, &data).await?;
+        } else {
+            self.device.write_maskrom_area_no_crc(area, &data).await?;
+        }
         Ok(())
     }
 }
@@ -385,14 +394,23 @@ pub enum Command {
     /// Download boot code from a rockfile (maskrom mode)
     #[command(alias = "db")]
     DownloadBoot {
+        /// Disable CRC (May not work on all devices)
+        #[arg(long = "no-crc", action = ArgAction::SetFalse, default_value_t = true)]
+        crc: bool,
         path: PathBuf,
     },
     /// Download code to sram area (maskrom mode)
     DownloadSram {
+        /// Disable CRC (May not work on all devices)
+        #[arg(long = "no-crc", action = ArgAction::SetFalse, default_value_t = true)]
+        crc: bool,
         path: PathBuf,
     },
     /// Download code to DDR area (maskrom mode)
     DownloadDDR {
+        /// Disable CRC (May not work on all devices)
+        #[arg(long = "no-crc", action = ArgAction::SetFalse, default_value_t = true)]
+        crc: bool,
         path: PathBuf,
     },
     #[command(alias = "rl")]
@@ -461,9 +479,13 @@ impl Command {
     {
         match self {
             Command::List => unreachable!(),
-            Command::DownloadSram { path } => device.download_maskrom_area(0x471, &path).await,
-            Command::DownloadDDR { path } => device.download_maskrom_area(0x472, &path).await,
-            Command::DownloadBoot { path } => device.download_boot(&path).await,
+            Command::DownloadSram { crc, path } => {
+                device.download_maskrom_area(0x471, &path, crc).await
+            }
+            Command::DownloadDDR { crc, path } => {
+                device.download_maskrom_area(0x472, &path, crc).await
+            }
+            Command::DownloadBoot { crc, path } => device.download_boot(&path, crc).await,
             Command::Read {
                 offset,
                 length,
