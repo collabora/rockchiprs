@@ -620,7 +620,7 @@ where
 #[cfg(feature = "async")]
 impl<T> AsyncSeek for DeviceIOAsync<DeviceAsync<T>, T>
 where
-    T: TransportAsync + Unpin + Send + 'static,
+    T: TransportAsync + Unpin + MaybeSend + 'static,
 {
     fn poll_seek(
         self: std::pin::Pin<&mut Self>,
