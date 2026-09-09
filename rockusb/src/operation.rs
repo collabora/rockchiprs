@@ -61,7 +61,7 @@ pub trait OperationSteps<T> {
 }
 
 enum MaskRomSteps {
-    Writing(crc::Digest<'static, u16>),
+    Writing(Option<crc::Digest<'static, u16>>),
     Dummy,
     Done,
 }
@@ -83,7 +83,17 @@ impl<'a> MaskRomOperation<'a> {
             block: [0; 4096],
             data,
             area,
-            steps: MaskRomSteps::Writing(CRC.digest()),
+            steps: MaskRomSteps::Writing(Some(CRC.digest())),
+        }
+    }
+
+    fn new_no_crc(area: u16, data: &'a [u8]) -> Self {
+        Self {
+            written: 0,
+            block: [0; 4096],
+            data,
+            area,
+            steps: MaskRomSteps::Writing(None),
         }
     }
 }
@@ -100,20 +110,28 @@ impl OperationSteps<()> for MaskRomOperation<'_> {
                 self.written += chunksize;
                 let chunk = match chunksize {
                     4096 => {
-                        crc.update(&self.block);
+                        if let Some(crc) = crc.as_mut() {
+                            crc.update(&self.block);
+                        }
                         self.steps = MaskRomSteps::Writing(crc);
                         &self.block[..]
                     }
                     4095 => {
                         // Add extra 0 to avoid splitting crc over two blocks
                         self.block[4095] = 0;
-                        crc.update(&self.block);
+                        if let Some(crc) = crc.as_mut() {
+                            crc.update(&self.block);
+                        }
                         self.steps = MaskRomSteps::Writing(crc);
                         &self.block[..]
                     }
                     mut end => {
-                        crc.update(&self.block[0..end]);
-                        let crc = crc.finalize();
+                        let crc = if let Some(mut crc) = crc {
+                            crc.update(&self.block[0..end]);
+                            crc.finalize()
+                        } else {
+                            0
+                        };
                         self.block[end] = (crc >> 8) as u8;
                         self.block[end + 1] = (crc & 0xff) as u8;
                         end += 2;
@@ -154,6 +172,10 @@ impl OperationSteps<()> for MaskRomOperation<'_> {
 /// Write a specific area; typically 0x471 or 0x472 data as retrieved from a rockchip boot file
 pub fn write_area(area: u16, data: &[u8]) -> MaskRomOperation<'_> {
     MaskRomOperation::new(area, data)
+}
+
+pub fn write_area_no_crc(area: u16, data: &[u8]) -> MaskRomOperation<'_> {
+    MaskRomOperation::new_no_crc(area, data)
 }
 
 trait FromOperation {
