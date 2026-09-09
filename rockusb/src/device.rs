@@ -150,6 +150,22 @@ where
             .await
     }
 
+    /// Write a specific area while in maskrom mode; typically 0x471 or 0x472 data as retrieved from a
+    /// rockchip boot file.
+    ///
+    /// This variant doesn't set the CRC at the end of the upload, which can speed up uploads,
+    /// especially for larger payloads. This is not supported on all Rockchip devices and may cause
+    /// uploads to fail.
+    pub async fn write_maskrom_area_no_crc(
+        &mut self,
+        area: u16,
+        data: &[u8],
+    ) -> DeviceResult<(), T> {
+        self.transport
+            .handle_operation(crate::operation::write_area_no_crc(area, data))
+            .await
+    }
+
     /// Reset the device
     pub async fn reset_device(&mut self, opcode: ResetOpcode) -> DeviceResult<(), T> {
         self.transport
