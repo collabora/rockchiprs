@@ -34,13 +34,14 @@ bmap-parser = "0.2.0"
 clap = { version = "4.2", features = ["derive"] }
 clap-num = "1.0"
 flate2 = "1.0.25"
+zstd = "0.13"
 rockfile = { path = "../rockfile", version = "0.1.2" }
 rockusb-mock = { path = "../rockusb-mock" }
 rusb = "0.9.1"
 tokio = { version = "1.40.0", features = ["full"] }
 futures = { version = "0.3.31", features = ["compat", "io-compat"]}
 tokio-util = { version = "0.7.12", features = ["compat"] }
-async-compression = { version = "0.4.5", features = ["gzip", "futures-io"] }
+async-compression = { version = "0.4.5", features = ["gzip", "zstd", "futures-io"] }
 
 [package.metadata.docs.rs]
 all-features = true

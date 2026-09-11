@@ -19,9 +19,10 @@ use rockusb::{
     device::{Device, Transport},
     protocol::{ResetOpcode, StorageIndex},
 };
+use zstd::stream::read::Decoder as SyncZstdDecoder;
 
 #[cfg(feature = "async")]
-use async_compression::futures::bufread::GzipDecoder;
+use async_compression::futures::bufread::{GzipDecoder, ZstdDecoder};
 #[cfg(feature = "async")]
 use rockusb::device::{DeviceAsync, TransportAsync};
 #[cfg(feature = "async")]
@@ -284,6 +285,11 @@ where
                 let mut gz = bmap_parser::Discarder::new(gz);
                 bmap_parser::copy(&mut gz, &mut writer, &bmap)?;
             }
+            Some("zst") => {
+                let zstd = SyncZstdDecoder::new(file)?;
+                let mut zstd = bmap_parser::Discarder::new(zstd);
+                bmap_parser::copy(&mut zstd, &mut writer, &bmap)?;
+            }
             _ => {
                 bmap_parser::copy(&mut file, &mut writer, &bmap)?;
             }
@@ -313,6 +319,15 @@ where
                 let gz = GzipDecoder::new(file);
                 let mut gz = bmap_parser::AsyncDiscarder::new(gz);
                 bmap_parser::copy_async(&mut gz, &mut writer, &bmap).await?;
+            }
+            Some("zst") => {
+                let mut zstd = ZstdDecoder::new(file);
+                // Match the sync zstd::Decoder, which decodes all concatenated
+                // frames by default. Without this, a multi-frame image (e.g. from
+                // pzstd) would be silently truncated after the first frame.
+                zstd.multiple_members(true);
+                let mut zstd = bmap_parser::AsyncDiscarder::new(zstd);
+                bmap_parser::copy_async(&mut zstd, &mut writer, &bmap).await?;
             }
             _ => {
                 bmap_parser::copy_async(&mut file, &mut writer, &bmap).await?;
